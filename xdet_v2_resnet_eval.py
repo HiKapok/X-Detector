@@ -61,27 +61,27 @@ tf.app.flags.DEFINE_integer(
     'resnet_size', 50,
     'The size of the ResNet model to use.')
 tf.app.flags.DEFINE_string(
-    'data_format', 'channels_first', # 'channels_first' or 'channels_last'
+    'data_format', 'channels_last', # 'channels_first' or 'channels_last'
     'A flag to override the data format used in the model. channels_first '
     'provides a performance boost on GPU but is not always compatible '
     'with CPU. If left unspecified, the data format will be chosen '
     'automatically based on whether TensorFlow was built for CPU or GPU.')
 tf.app.flags.DEFINE_float(
-    'weight_decay', 0.00025, 'The weight decay on the model weights.')
+    'weight_decay', 0.0005, 'The weight decay on the model weights.')
 tf.app.flags.DEFINE_float(
     'negative_ratio', 3., 'Negative ratio in the loss function.')
 tf.app.flags.DEFINE_float(
-    'match_threshold', 0.6, 'Matching threshold in the loss function.')
+    'match_threshold', 0.5, 'Matching threshold in the loss function.')
 tf.app.flags.DEFINE_float(
-    'neg_threshold', 0.4, 'Matching threshold for the negtive examples in the loss function.')
+    'neg_threshold', 0.5, 'Matching threshold for the negtive examples in the loss function.')
 tf.app.flags.DEFINE_float(
-    'select_threshold', 0.65, 'Class-specific confidence score threshold for selecting a box.')
+    'select_threshold', 0.01, 'Class-specific confidence score threshold for selecting a box.')
 tf.app.flags.DEFINE_float(
     'nms_threshold', 0.4, 'Matching threshold in NMS algorithm.')
 tf.app.flags.DEFINE_integer(
-    'nms_topk_percls', 10, 'Number of object for each class to keep after NMS.')
+    'nms_topk_percls', 200, 'Number of object for each class to keep after NMS.')
 tf.app.flags.DEFINE_integer(
-    'nms_topk', 20, 'Number of total object to keep after NMS.')
+    'nms_topk', 200, 'Number of total object to keep after NMS.')
 # checkpoint related configuration
 tf.app.flags.DEFINE_string(
     'checkpoint_path', './model/resnet50',#None,
@@ -90,10 +90,21 @@ tf.app.flags.DEFINE_string(
     'model_scope', 'xdet_resnet',
     'Model scope name used to replace the name_scope in checkpoint.')
 tf.app.flags.DEFINE_boolean(
-    'run_on_cloud', True,
-    'Wether we will train on cloud (checkpoint will be found in the model_dir).')
+    'run_on_cloud', False,
+    'Wether we will train on cloud (checkpoint will be found in the "data_dir/cloud_checkpoint_path").')
+tf.app.flags.DEFINE_string(
+    'cloud_checkpoint_path', 'resnet50/model.ckpt',
+    'The path to a checkpoint from which to fine-tune.')
 
 FLAGS = tf.app.flags.FLAGS
+
+from dataset import dataset_common
+def gain_translate_table():
+    label2name_table = {}
+    for class_name, labels_pair in dataset_common.VOC_LABELS.items():
+        label2name_table[labels_pair[0]] = class_name
+    return label2name_table
+label2name_table = gain_translate_table()
 
 def input_pipeline():
     image_preprocessing_fn = lambda image_, shape_, glabels_, gbboxes_ : preprocessing_factory.get_preprocessing(
@@ -101,9 +112,9 @@ def input_pipeline():
 
     anchor_creator = anchor_manipulator.AnchorCreator([FLAGS.train_image_size] * 2,
                                                     layers_shapes = [(38, 38)],
-                                                    anchor_scales = [[0.05, 0.15, 0.3, 0.5, 0.65, 0.8]],
+                                                    anchor_scales = [[0.05, 0.1, 0.25, 0.4, 0.55, 0.7, 0.85]],
                                                     extra_anchor_scales = [[]],
-                                                    anchor_ratios = [[1., 2., .5]],
+                                                    anchor_ratios = [[1., 2., 3., .5, 0.3333]],
                                                     layer_steps = [8])
 
     def input_fn():
@@ -111,6 +122,7 @@ def input_pipeline():
 
         anchor_encoder_decoder = anchor_manipulator.AnchorEncoder(all_anchors,
                                         num_classes = FLAGS.num_classes,
+                                        allowed_borders = [0.1],
                                         ignore_threshold = FLAGS.match_threshold, # only update labels for positive examples
                                         prior_scaling=[0.1, 0.1, 0.2, 0.2])
 
@@ -179,18 +191,20 @@ def bboxes_eval(org_image, image_shape, bbox_img, cls_pred_logits, bboxes_pred, 
     bboxes_pred = tf.reshape(bboxes_pred, [-1, 4])
     glabels_raw = tf.reshape(glabels_raw, [-1])
     gbboxes_raw = tf.reshape(gbboxes_raw, [-1])
+    gbboxes_raw = tf.boolean_mask(gbboxes_raw, glabels_raw > 0)
+    glabels_raw = tf.boolean_mask(glabels_raw, glabels_raw > 0)
     isdifficult = tf.reshape(isdifficult, [-1])
 
     with tf.device('/device:CPU:0'):
         selected_scores, selected_bboxes = eval_helper.tf_bboxes_select([cls_pred_prob], [bboxes_pred], FLAGS.select_threshold, num_classes, scope='xdet_v2_select')
-
-        selected_scores, selected_bboxes = eval_helper.bboxes_sort(selected_scores, selected_bboxes, top_k=FLAGS.nms_topk * 2)
 
         selected_bboxes = eval_helper.bboxes_clip(bbox_img, selected_bboxes)
         selected_scores, selected_bboxes = eval_helper.filter_boxes(selected_scores, selected_bboxes, 0.03, image_shape, [FLAGS.train_image_size] * 2, keep_top_k = FLAGS.nms_topk * 2)
 
         # Resize bboxes to original image shape.
         selected_bboxes = eval_helper.bboxes_resize(bbox_img, selected_bboxes)
+
+        selected_scores, selected_bboxes = eval_helper.bboxes_sort(selected_scores, selected_bboxes, top_k=FLAGS.nms_topk * 2)
 
         # Apply NMS algorithm.
         selected_scores, selected_bboxes = eval_helper.bboxes_nms_batch(selected_scores, selected_bboxes,
@@ -205,10 +219,10 @@ def bboxes_eval(org_image, image_shape, bbox_img, cls_pred_logits, bboxes_pred, 
 
         # FP and TP metrics.
         tp_fp_metric = metrics.streaming_tp_fp_arrays(num_gbboxes, tp, fp, selected_scores)
-        metrics_name = ('v_nobjects', 'v_ndetections', 'v_tp', 'v_fp', 'v_scores')
+        metrics_name = ('nobjects', 'ndetections', 'tp', 'fp', 'scores')
         for c in tp_fp_metric[0].keys():
             for _ in range(len(tp_fp_metric[0][c])):
-                dict_metrics['tp_fp_%s_%s' % (c, metrics_name[_])] = (tp_fp_metric[0][c][_],
+                dict_metrics['tp_fp_%s_%s' % (label2name_table[c], metrics_name[_])] = (tp_fp_metric[0][c][_],
                                                 tp_fp_metric[1][c][_])
 
         # Add to summaries precision/recall values.
@@ -281,9 +295,9 @@ def xdet_model_fn(features, labels, mode, params):
     if mode != tf.estimator.ModeKeys.TRAIN:
         org_image = labels['targets'][-2]
         isdifficult = labels['targets'][-3]
-        gbboxes_raw = labels['targets'][-4]
-        glabels_raw = labels['targets'][-5]
-        bbox_img = labels['targets'][-6]
+        bbox_img = labels['targets'][-4]
+        gbboxes_raw = labels['targets'][-5]
+        glabels_raw = labels['targets'][-6]
 
     glabels = labels['targets'][:num_feature_layers][0]
     gtargets = labels['targets'][num_feature_layers : 2 * num_feature_layers][0]
@@ -331,7 +345,8 @@ def xdet_model_fn(features, labels, mode, params):
     n_positives = tf.reduce_sum(fpositive_mask)
     # negtive examples are those max_overlap is still lower than neg_threshold, note that some positive may also has lower jaccard
     # note those gscores is 0 is either be ignored during anchors encode or anchors have 0 overlap with all ground truth
-    negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(positive_mask), gscores < params['neg_threshold']), gscores > 0.)
+    negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(tf.logical_or(positive_mask, glabels < 0)), gscores < params['neg_threshold']), gscores > 0.)
+    #negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(positive_mask), gscores < params['neg_threshold']), gscores > 0.)
     #negtive_mask = tf.logical_and(gscores < params['neg_threshold'], tf.logical_not(positive_mask))
     fnegtive_mask = tf.cast(negtive_mask, tf.float32)
     n_negtives = tf.reduce_sum(fnegtive_mask)
@@ -359,7 +374,7 @@ def xdet_model_fn(features, labels, mode, params):
     total_examples = tf.reduce_sum(tf.cast(final_mask, tf.float32))
 
     # add mask for glabels and cls_pred here
-    glabels = tf.boolean_mask(glabels, tf.stop_gradient(final_mask))
+    glabels = tf.boolean_mask(tf.clip_by_value(glabels, 0, FLAGS.num_classes), tf.stop_gradient(final_mask))
     cls_pred = tf.boolean_mask(cls_pred, tf.stop_gradient(final_mask))
     location_pred = tf.boolean_mask(location_pred, tf.stop_gradient(positive_mask))
     gtargets = tf.boolean_mask(gtargets, tf.stop_gradient(positive_mask))
@@ -372,7 +387,7 @@ def xdet_model_fn(features, labels, mode, params):
     tf.identity(cross_entropy, name='cross_entropy_loss')
     tf.summary.scalar('cross_entropy_loss', cross_entropy)
 
-    loc_loss = tf.cond(n_positives > 0., lambda: modified_smooth_l1(location_pred, tf.stop_gradient(gtargets)), lambda: tf.zeros_like(location_pred))
+    loc_loss = tf.cond(n_positives > 0., lambda: modified_smooth_l1(location_pred, tf.stop_gradient(gtargets), sigma=1.), lambda: tf.zeros_like(location_pred))
     #loc_loss = modified_smooth_l1(location_pred, tf.stop_gradient(gtargets))
     loc_loss = tf.reduce_mean(tf.reduce_sum(loc_loss, axis=-1))
     loc_loss = tf.identity(loc_loss, name='location_loss')
@@ -382,7 +397,7 @@ def xdet_model_fn(features, labels, mode, params):
     with tf.control_dependencies([save_image_op]):
         # Add weight decay to the loss. We exclude the batch norm variables because
         # doing so leads to a small improvement in accuracy.
-        loss = cross_entropy + loc_loss + params['weight_decay'] * tf.add_n(
+        loss = 1.3 * (cross_entropy + loc_loss) + params['weight_decay'] * tf.add_n(
           [tf.nn.l2_loss(v) for v in tf.trainable_variables()
            if 'batch_normalization' not in v.name])
         total_loss = tf.identity(loss, name='total_loss')

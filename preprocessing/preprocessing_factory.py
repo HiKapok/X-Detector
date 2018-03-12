@@ -45,8 +45,8 @@ def get_preprocessing(name, is_training=False):
       ValueError: If Preprocessing `name` is not recognized.
     """
     preprocessing_fn_map = {
-        'light_head_resnet_faster_rcnn': common_preprocessing,
-        'xdet_resnet': common_preprocessing,
+        'xception_lighthead': common_preprocessing.light_head_preprocess_image,
+        'xdet_resnet': common_preprocessing.preprocess_image,
     }
 
     if name not in preprocessing_fn_map:
@@ -54,7 +54,7 @@ def get_preprocessing(name, is_training=False):
 
     def preprocessing_fn(image, labels, bboxes,
                          out_shape, data_format='NHWC', **kwargs):
-        return preprocessing_fn_map[name].preprocess_image(#(preprocess_image_unittest
+        return preprocessing_fn_map[name](#(preprocess_image_unittest
             image, labels, bboxes, out_shape, data_format=data_format,
             is_training=is_training, **kwargs)
     return preprocessing_fn

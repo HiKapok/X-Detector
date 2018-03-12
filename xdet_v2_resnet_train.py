@@ -61,7 +61,7 @@ tf.app.flags.DEFINE_integer(
     'train_epochs', None,
     'The number of epochs to use for training.')
 tf.app.flags.DEFINE_integer(
-    'batch_size', 16,
+    'batch_size', 18,
     'Batch size for training and evaluation.')
 tf.app.flags.DEFINE_string(
     'data_format', 'channels_first', # 'channels_first' or 'channels_last'
@@ -72,12 +72,12 @@ tf.app.flags.DEFINE_string(
 tf.app.flags.DEFINE_float(
     'negative_ratio', 3., 'Negative ratio in the loss function.')
 tf.app.flags.DEFINE_float(
-    'match_threshold', 0.6, 'Matching threshold in the loss function.')
+    'match_threshold', 0.5, 'Matching threshold in the loss function.')
 tf.app.flags.DEFINE_float(
-    'neg_threshold', 0.4, 'Matching threshold for the negtive examples in the loss function.')
+    'neg_threshold', 0.5, 'Matching threshold for the negtive examples in the loss function.')
 # optimizer related configuration
 tf.app.flags.DEFINE_float(
-    'weight_decay', 0.00025, 'The weight decay on the model weights.')
+    'weight_decay', 0.0005, 'The weight decay on the model weights.')
 tf.app.flags.DEFINE_float(
     'momentum', 0.9,
     'The momentum for the MomentumOptimizer and RMSPropOptimizer.')
@@ -93,10 +93,10 @@ tf.app.flags.DEFINE_float(
     'Number of epochs after which learning rate decays.')
 # for learning rate piecewise_constant decay
 tf.app.flags.DEFINE_string(
-    'decay_boundaries', '60000, 90000',
+    'decay_boundaries', '70000, 90000',
     'Learning rate decay boundaries by global_step (comma-separated list).')
 tf.app.flags.DEFINE_string(
-    'lr_decay_factors', '1, 0.5, 0.1',
+    'lr_decay_factors', '1, 0.8, 0.1',
     'The values of learning_rate decay factor for each segment between boundaries (comma-separated list).')
 # checkpoint related configuration
 tf.app.flags.DEFINE_string(
@@ -116,7 +116,10 @@ tf.app.flags.DEFINE_boolean(
     'When restoring a checkpoint would ignore missing variables.')
 tf.app.flags.DEFINE_boolean(
     'run_on_cloud', True,
-    'Wether we will train on cloud (pre-trained model will be placed in the data_dir/resnet50).')
+    'Wether we will train on cloud (pre-trained model will be placed in the "data_dir/cloud_checkpoint_path").')
+tf.app.flags.DEFINE_string(
+    'cloud_checkpoint_path', 'resnet50/model.ckpt',
+    'The path to a checkpoint from which to fine-tune.')
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -126,9 +129,9 @@ def input_pipeline():
 
     anchor_creator = anchor_manipulator.AnchorCreator([FLAGS.train_image_size] * 2,
                                                     layers_shapes = [(38, 38)],
-                                                    anchor_scales = [[0.05, 0.15, 0.3, 0.5, 0.65, 0.8]],
+                                                    anchor_scales = [[0.05, 0.1, 0.25, 0.4, 0.55, 0.7, 0.85]],
                                                     extra_anchor_scales = [[]],
-                                                    anchor_ratios = [[1., 2., .5]],
+                                                    anchor_ratios = [[1., 2., 3., .5, 0.3333]],
                                                     layer_steps = [8])
 
     def input_fn():
@@ -136,6 +139,7 @@ def input_pipeline():
 
         anchor_encoder_decoder = anchor_manipulator.AnchorEncoder(all_anchors,
                                         num_classes = FLAGS.num_classes,
+                                        allowed_borders = [0.1],
                                         ignore_threshold = FLAGS.match_threshold, # only update labels for positive examples
                                         prior_scaling=[0.1, 0.1, 0.2, 0.2])
         list_from_batch, _ = dataset_factory.get_dataset(FLAGS.dataset_name,
@@ -210,7 +214,8 @@ def xdet_model_fn(features, labels, mode, params):
     n_positives = tf.reduce_sum(fpositive_mask)
     # negtive examples are those max_overlap is still lower than neg_threshold, note that some positive may also has lower jaccard
     # note those gscores is 0 is either be ignored during anchors encode or anchors have 0 overlap with all ground truth
-    negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(positive_mask), gscores < params['neg_threshold']), gscores > 0.)
+    negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(tf.logical_or(positive_mask, glabels < 0)), gscores < params['neg_threshold']), gscores > 0.)
+    #negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(positive_mask), gscores < params['neg_threshold']), gscores > 0.)
     #negtive_mask = tf.logical_and(gscores < params['neg_threshold'], tf.logical_not(positive_mask))
     fnegtive_mask = tf.cast(negtive_mask, tf.float32)
     n_negtives = tf.reduce_sum(fnegtive_mask)
@@ -239,7 +244,7 @@ def xdet_model_fn(features, labels, mode, params):
     total_examples = tf.reduce_sum(tf.cast(final_mask, tf.float32))
 
     # add mask for glabels and cls_pred here
-    glabels = tf.boolean_mask(glabels, tf.stop_gradient(final_mask))
+    glabels = tf.boolean_mask(tf.clip_by_value(glabels, 0, FLAGS.num_classes), tf.stop_gradient(final_mask))
     cls_pred = tf.boolean_mask(cls_pred, tf.stop_gradient(final_mask))
     location_pred = tf.boolean_mask(location_pred, tf.stop_gradient(positive_mask))
     gtargets = tf.boolean_mask(gtargets, tf.stop_gradient(positive_mask))
@@ -259,7 +264,7 @@ def xdet_model_fn(features, labels, mode, params):
     tf.identity(cross_entropy, name='cross_entropy_loss')
     tf.summary.scalar('cross_entropy_loss', cross_entropy)
 
-    loc_loss = tf.cond(n_positives > 0., lambda: modified_smooth_l1(location_pred, tf.stop_gradient(gtargets)), lambda: tf.zeros_like(location_pred))
+    loc_loss = tf.cond(n_positives > 0., lambda: modified_smooth_l1(location_pred, tf.stop_gradient(gtargets), sigma=1.), lambda: tf.zeros_like(location_pred))
     #loc_loss = modified_smooth_l1(location_pred, tf.stop_gradient(gtargets))
     loc_loss = tf.reduce_mean(tf.reduce_sum(loc_loss, axis=-1))
     loc_loss = tf.identity(loc_loss, name='location_loss')
@@ -268,7 +273,7 @@ def xdet_model_fn(features, labels, mode, params):
 
     # Add weight decay to the loss. We exclude the batch norm variables because
     # doing so leads to a small improvement in accuracy.
-    loss = cross_entropy + loc_loss + params['weight_decay'] * tf.add_n(
+    loss = 1.3 * (cross_entropy + loc_loss) + params['weight_decay'] * tf.add_n(
       [tf.nn.l2_loss(v) for v in tf.trainable_variables()
        if 'batch_normalization' not in v.name])
     total_loss = tf.identity(loss, name='total_loss')

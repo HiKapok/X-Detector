@@ -1,63 +1,89 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
-import os
-import sys
-
-from scipy.misc import imread, imsave, imshow, imresize
 import tensorflow as tf
+import numpy as np
+sess = tf.Session()
 
-name_map = {'beta': 'bias',
-            'gamma': 'scale',
-            'moving_mean': 'mean',
-            'moving_variance': 'var',
-            'kernel':'weight',
-            'depthwise_kernel': 'df',
-            'pointwise_kernel': 'pf'}
 
-test_var_name_list = ['block1_conv1/kernel',
-                    'block1_conv1_bn/gamma',
-                    'block1_conv1_bn/beta',
-                    'block1_conv1_bn/moving_mean',
-                    'block1_conv1_bn/moving_variance',
-                    'block1_conv2/kernel',
-                    'block1_conv2_bn/gamma',
-                    'block1_conv2_bn/beta',
-                    'block1_conv2_bn/moving_mean',
-                    'block1_conv2_bn/moving_variance',
-                    'conv2d_1/kernel',
-                    'batch_normalization_1/gamma',
-                    'batch_normalization_1/beta',
-                    'batch_normalization_1/moving_mean',
-                    'batch_normalization_1/moving_variance',
-                    'block2_sepconv1/depthwise_kernel',
-                    'block2_sepconv1/pointwise_kernel']
+elems = np.array([[1,2], [2,3], [3,4]])
+alternates = tf.map_fn(lambda x: [x[0][0],x[1][1]], [elems,elems])
+print(sess.run(alternates))
+scores = tf.constant([11,12,13,14,15])
+labels = tf.constant([[111,12,13,14,15], [211,12,13,14,15], [311,12,13,14,15], [411,12,13,14,15],[511,12,13,14,15]])
 
-for var_name in test_var_name_list:
-    prefix = var_name[:var_name.rfind('/')]
-    suffix = var_name[var_name.rfind('/') + 1 :]
-    print(prefix + '_' + name_map[suffix])
+num_bboxes = tf.shape(scores)[0]
 
-# hardware related configuration
-tf.app.flags.DEFINE_string(
-    'boundaries', '60000, 90000, 120000',
-    'Learning rate decay boundaries.')
-tf.app.flags.DEFINE_string(
-    'lr_decay_factors', '0.1, 0.01, 0.001',
-    'The values of learning rate for each segment between boundaries.')
+left_count = 8 - num_bboxes
 
-FLAGS = tf.app.flags.FLAGS
 
-def parse_comma_list(args):
-    return [float(s.strip()) for s in args.split(',')]
+print(sess.run([tf.gather(labels, [1,2,3], axis=1)]))
 
-def main(_):
-    print(parse_comma_list(FLAGS.boundaries))
+select_indices = tf.random_shuffle(tf.range(num_bboxes))[:tf.floormod(left_count, num_bboxes)]
 
-if __name__ == '__main__':
-  tf.logging.set_verbosity(tf.logging.INFO)
-  tf.app.run()
+select_indices = tf.concat([tf.tile(tf.range(num_bboxes), [tf.floor_div(left_count, num_bboxes) + 1]), select_indices], axis = 0)
+print(sess.run([tf.gather(scores, select_indices), tf.gather(labels, select_indices)]))
+
+print(sess.run(tf.where([[True],[False],[True],[True],[False],[False]])))
+
+# from __future__ import absolute_import
+# from __future__ import division
+# from __future__ import print_function
+
+# import os
+# import sys
+
+# from scipy.misc import imread, imsave, imshow, imresize
+# import tensorflow as tf
+
+# name_map = {'beta': 'bias',
+#             'gamma': 'scale',
+#             'moving_mean': 'mean',
+#             'moving_variance': 'var',
+#             'kernel':'weight',
+#             'depthwise_kernel': 'df',
+#             'pointwise_kernel': 'pf'}
+
+# test_var_name_list = ['block1_conv1/kernel',
+#                     'block1_conv1_bn/gamma',
+#                     'block1_conv1_bn/beta',
+#                     'block1_conv1_bn/moving_mean',
+#                     'block1_conv1_bn/moving_variance',
+#                     'block1_conv2/kernel',
+#                     'block1_conv2_bn/gamma',
+#                     'block1_conv2_bn/beta',
+#                     'block1_conv2_bn/moving_mean',
+#                     'block1_conv2_bn/moving_variance',
+#                     'conv2d_1/kernel',
+#                     'batch_normalization_1/gamma',
+#                     'batch_normalization_1/beta',
+#                     'batch_normalization_1/moving_mean',
+#                     'batch_normalization_1/moving_variance',
+#                     'block2_sepconv1/depthwise_kernel',
+#                     'block2_sepconv1/pointwise_kernel']
+
+# for var_name in test_var_name_list:
+#     prefix = var_name[:var_name.rfind('/')]
+#     suffix = var_name[var_name.rfind('/') + 1 :]
+#     print(prefix + '_' + name_map[suffix])
+
+# # hardware related configuration
+# tf.app.flags.DEFINE_string(
+#     'boundaries', '60000, 90000, 120000',
+#     'Learning rate decay boundaries.')
+# tf.app.flags.DEFINE_string(
+#     'lr_decay_factors', '0.1, 0.01, 0.001',
+#     'The values of learning rate for each segment between boundaries.')
+
+# FLAGS = tf.app.flags.FLAGS
+
+# def parse_comma_list(args):
+#     return [float(s.strip()) for s in args.split(',')]
+
+# def main(_):
+#     print(parse_comma_list(FLAGS.boundaries))
+
+# if __name__ == '__main__':
+#   tf.logging.set_verbosity(tf.logging.INFO)
+#   tf.app.run()
 
 
 

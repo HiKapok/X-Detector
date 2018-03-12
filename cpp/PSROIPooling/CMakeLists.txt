@@ -1,5 +1,5 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 2.8)
-PROJECT(ps_roi_pooling)
+PROJECT(ps_roi_align)
 
 find_package(CUDA REQUIRED)
 
@@ -25,29 +25,38 @@ INCLUDE_DIRECTORIES(${TF_INC}/external/nsync/public)
 LINK_DIRECTORIES(${TF_LIB})
 
 # approach 1
-# CUDA_ADD_LIBRARY(ps_roi_pooling_gpu SHARED ps_roi_pooling_op.cu OPTIONS -I$TF_INC/tensorflow/stream_executor/cuda -I/usr/local)
+# CUDA_ADD_LIBRARY(ps_roi_align_gpu SHARED ps_roi_align_op.cu OPTIONS -I$TF_INC/tensorflow/stream_executor/cuda -I/usr/local)
 
-# ADD_LIBRARY(ps_roi_pooling SHARED
-#   ps_roi_pooling_op.h
-#   ps_roi_pooling_op.cc
+# ADD_LIBRARY(ps_roi_align SHARED
+#   ps_roi_align_op.h
+#   ps_roi_align_op.cc
 #   )
 
-# TARGET_LINK_LIBRARIES(ps_roi_pooling tensorflow_framework ${CUDA_LIBRARIES} ps_roi_pooling_gpu)
+# TARGET_LINK_LIBRARIES(ps_roi_align tensorflow_framework ${CUDA_LIBRARIES} ps_roi_align_gpu)
 
 
 # approach 2
-CUDA_COMPILE(PSROI_POOLING_CU_O ps_roi_pooling_op.cu MODULE OPTIONS -I$TF_INC -I/usr/local)
-CUDA_COMPILE(PSROI_POOLING_GRAD_CU_O ps_roi_pooling_grad_op.cu MODULE OPTIONS -I$TF_INC -I/usr/local)
+CUDA_COMPILE(PSROI_ALIGN_CU_O ps_roi_align_op.cu MODULE OPTIONS -I$TF_INC -I/usr/local)
+CUDA_COMPILE(PSROI_ALIGN_GRAD_CU_O ps_roi_align_grad_op.cu MODULE OPTIONS -I$TF_INC -I/usr/local)
+CUDA_COMPILE(ROTATED_PSROI_ALIGN_CU_O rotated_ps_roi_align_op.cu MODULE OPTIONS -I$TF_INC -I/usr/local)
+CUDA_COMPILE(ROTATED_PSROI_ALIGN_GRAD_CU_O rotated_ps_roi_align_grad_op.cu MODULE OPTIONS -I$TF_INC -I/usr/local)
 
-ADD_LIBRARY(ps_roi_pooling SHARED
-  ${PSROI_POOLING_CU_O}
-  ${PSROI_POOLING_GRAD_CU_O}
-  ps_roi_pooling_op.h
-  ps_roi_pooling_op.cc
-  ps_roi_pooling_grad_op.cc
+ADD_LIBRARY(ps_roi_align SHARED
+  ${PSROI_ALIGN_CU_O}
+  ${PSROI_ALIGN_GRAD_CU_O}
+  ${ROTATED_PSROI_ALIGN_CU_O}
+  ${ROTATED_PSROI_ALIGN_GRAD_CU_O}
+  rotated_ps_roi_align_op.h
+  rotated_ps_roi_align_op.cc
+  rotated_ps_roi_align_grad_op.cc
+  ps_roi_align_op.h
+  ps_roi_align_op.cc
+  ps_roi_align_grad_op.cc
+  common.h
+  common.cc
   )
 
-TARGET_LINK_LIBRARIES(ps_roi_pooling tensorflow_framework ${CUDA_LIBRARIES})
+TARGET_LINK_LIBRARIES(ps_roi_align tensorflow_framework ${CUDA_LIBRARIES})
 
 
  #nvcc -std=c++11 -c -o cuda_op_kernel.cu.o ../focal_loss_op.cu -I $TF_INC -I$TF_INC/external/nsync/public -D GOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -I/usr/local/ -I$TF_INC/tensorflow/stream_executor/cuda --expt-relaxed-constexpr -gencode arch=compute_61,code=sm_61

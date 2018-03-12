@@ -5,7 +5,7 @@ import tensorflow as tf
 def get_init_fn_for_scaffold(flags):
     flags_checkpoint_path = flags.checkpoint_path
     if flags.run_on_cloud:
-        flags_checkpoint_path = os.path.join(flags.data_dir, 'resnet50/model.ckpt')
+        flags_checkpoint_path = os.path.join(flags.data_dir, flags.cloud_checkpoint_path)
     # Warn the user if a checkpoint exists in the model_dir. Then ignore.
     if tf.train.latest_checkpoint(flags.model_dir):
         tf.logging.info('Ignoring --checkpoint_path because a checkpoint already exists in %s' % flags.model_dir)

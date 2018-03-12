@@ -7,14 +7,17 @@ import sys
 
 #from scipy.misc import imread, imsave, imshow, imresize
 import tensorflow as tf
+import numpy as np
 
-from net import xdet_body
+from net import xdet_body_v3
 from utility import train_helper
+from utility import eval_helper
+from utility import metrics
 
 from dataset import dataset_factory
 from preprocessing import preprocessing_factory
 from preprocessing import anchor_manipulator
-
+from preprocessing import common_preprocessing
 
 # hardware related configuration
 tf.app.flags.DEFINE_integer(
@@ -30,128 +33,113 @@ tf.app.flags.DEFINE_float(
     'gpu_memory_fraction', 1., 'GPU memory fraction to use.')
 # scaffold related configuration
 tf.app.flags.DEFINE_string(
-    'data_dir', '../PASCAL/VOC_TF/VOC0712TF/',
+    'data_dir', '../PASCAL/VOC_TF/VOC2007TEST_TF/',
     'The directory where the dataset input data is stored.')
 tf.app.flags.DEFINE_string(
-    'dataset_name', 'pascalvoc_0712', 'The name of the dataset to load.')
+    'dataset_name', 'pascalvoc_2007', 'The name of the dataset to load.')
 tf.app.flags.DEFINE_integer(
     'num_classes', 21, 'Number of classes to use in the dataset.')
 tf.app.flags.DEFINE_string(
-    'dataset_split_name', 'train', 'The name of the train/test split.')
+    'dataset_split_name', 'test', 'The name of the train/test split.')
 tf.app.flags.DEFINE_string(
-    'model_dir', './logs/',
+    'model_dir', './logs_v3/',
     'The directory where the model will be stored.')
+tf.app.flags.DEFINE_string(
+    'debug_dir', './Debug_v3/',
+    'The directory where the debug files will be stored.')
 tf.app.flags.DEFINE_integer(
     'log_every_n_steps', 10,
     'The frequency with which logs are print.')
 tf.app.flags.DEFINE_integer(
-    'save_summary_steps', 500,
+    'save_summary_steps', 10,
     'The frequency with which summaries are saved, in seconds.')
-tf.app.flags.DEFINE_integer(
-    'save_checkpoints_secs', 7200,
-    'The frequency with which the model is saved, in seconds.')
 # model related configuration
 tf.app.flags.DEFINE_integer(
-    'train_image_size', 320,
+    'train_image_size', 352,
     'The size of the input image for the model to use.')
 tf.app.flags.DEFINE_integer(
     'resnet_size', 50,
     'The size of the ResNet model to use.')
-tf.app.flags.DEFINE_integer(
-    'train_epochs', None,
-    'The number of epochs to use for training.')
-tf.app.flags.DEFINE_integer(
-    'batch_size', 18,
-    'Batch size for training and evaluation.')
 tf.app.flags.DEFINE_string(
-    'data_format', 'channels_first', # 'channels_first' or 'channels_last'
+    'data_format', 'channels_last', # 'channels_first' or 'channels_last'
     'A flag to override the data format used in the model. channels_first '
     'provides a performance boost on GPU but is not always compatible '
     'with CPU. If left unspecified, the data format will be chosen '
     'automatically based on whether TensorFlow was built for CPU or GPU.')
+tf.app.flags.DEFINE_float(
+    'weight_decay', 0.0005, 'The weight decay on the model weights.')
 tf.app.flags.DEFINE_float(
     'negative_ratio', 3., 'Negative ratio in the loss function.')
 tf.app.flags.DEFINE_float(
     'match_threshold', 0.5, 'Matching threshold in the loss function.')
 tf.app.flags.DEFINE_float(
     'neg_threshold', 0.5, 'Matching threshold for the negtive examples in the loss function.')
-# optimizer related configuration
 tf.app.flags.DEFINE_float(
-    'weight_decay', 0.0005, 'The weight decay on the model weights.')
+    'select_threshold', 0.01, 'Class-specific confidence score threshold for selecting a box.')
 tf.app.flags.DEFINE_float(
-    'momentum', 0.9,
-    'The momentum for the MomentumOptimizer and RMSPropOptimizer.')
-tf.app.flags.DEFINE_float('learning_rate', 0.001, 'Initial learning rate.')
-tf.app.flags.DEFINE_float(
-    'end_learning_rate', 0.0001,
-    'The minimal end learning rate used by a polynomial decay learning rate.')
-# for learning rate exponential_decay
-tf.app.flags.DEFINE_float(
-    'learning_rate_decay_factor', 0.96, 'Learning rate decay factor.')
-tf.app.flags.DEFINE_float(
-    'decay_steps', 1000,
-    'Number of epochs after which learning rate decays.')
-# for learning rate piecewise_constant decay
-tf.app.flags.DEFINE_string(
-    'decay_boundaries', '70000, 90000',
-    'Learning rate decay boundaries by global_step (comma-separated list).')
-tf.app.flags.DEFINE_string(
-    'lr_decay_factors', '1, 0.8, 0.1',
-    'The values of learning_rate decay factor for each segment between boundaries (comma-separated list).')
+    'nms_threshold', 0.4, 'Matching threshold in NMS algorithm.')
+tf.app.flags.DEFINE_integer(
+    'nms_topk_percls', 200, 'Number of object for each class to keep after NMS.')
+tf.app.flags.DEFINE_integer(
+    'nms_topk', 200, 'Number of total object to keep after NMS.')
 # checkpoint related configuration
 tf.app.flags.DEFINE_string(
     'checkpoint_path', './model/resnet50',#None,
     'The path to a checkpoint from which to fine-tune.')
 tf.app.flags.DEFINE_string(
-    'checkpoint_model_scope', '',
-    'Model scope in the checkpoint. None if the same as the trained model.')
-tf.app.flags.DEFINE_string(
     'model_scope', 'xdet_resnet',
     'Model scope name used to replace the name_scope in checkpoint.')
-tf.app.flags.DEFINE_string(
-    'checkpoint_exclude_scopes', 'xdet_resnet/xdet_head, xdet_resnet/xdet_multi_path, xdet_resnet/xdet_additional_conv',#None
-    'Comma-separated list of scopes of variables to exclude when restoring from a checkpoint.')
 tf.app.flags.DEFINE_boolean(
-    'ignore_missing_vars', True,
-    'When restoring a checkpoint would ignore missing variables.')
-tf.app.flags.DEFINE_boolean(
-    'run_on_cloud', True,
-    'Wether we will train on cloud (pre-trained model will be placed in the "data_dir/cloud_checkpoint_path").')
+    'run_on_cloud', False,
+    'Wether we will train on cloud (checkpoint will be found in the "data_dir/cloud_checkpoint_path").')
 tf.app.flags.DEFINE_string(
     'cloud_checkpoint_path', 'resnet50/model.ckpt',
     'The path to a checkpoint from which to fine-tune.')
-#CUDA_VISIBLE_DEVICES
+
 FLAGS = tf.app.flags.FLAGS
+
+from dataset import dataset_common
+def gain_translate_table():
+    label2name_table = {}
+    for class_name, labels_pair in dataset_common.VOC_LABELS.items():
+        label2name_table[labels_pair[0]] = class_name
+    return label2name_table
+label2name_table = gain_translate_table()
 
 def input_pipeline():
     image_preprocessing_fn = lambda image_, shape_, glabels_, gbboxes_ : preprocessing_factory.get_preprocessing(
-        'xdet_resnet', is_training=True)(image_, glabels_, gbboxes_, out_shape=[FLAGS.train_image_size] * 2, data_format=('NCHW' if FLAGS.data_format=='channels_first' else 'NHWC'))
+        'xdet_resnet', is_training=False)(image_, glabels_, gbboxes_, out_shape=[FLAGS.train_image_size] * 2, data_format=('NCHW' if FLAGS.data_format=='channels_first' else 'NHWC'))
 
     anchor_creator = anchor_manipulator.AnchorCreator([FLAGS.train_image_size] * 2,
-                                                    layers_shapes = [(40, 40)],
+                                                    layers_shapes = [(22, 22)],
                                                     anchor_scales = [[0.05, 0.1, 0.25, 0.4, 0.55, 0.7, 0.85]],
                                                     extra_anchor_scales = [[]],
                                                     anchor_ratios = [[1., 2., 3., .5, 0.3333]],
-                                                    layer_steps = [8])
+                                                    layer_steps = [16])
 
     def input_fn():
         all_anchors, num_anchors_list = anchor_creator.get_all_anchors()
 
         anchor_encoder_decoder = anchor_manipulator.AnchorEncoder(all_anchors,
                                         num_classes = FLAGS.num_classes,
-                                        allowed_borders = [0.1],
+                                        allowed_borders = [0.13],
                                         ignore_threshold = FLAGS.match_threshold, # only update labels for positive examples
                                         prior_scaling=[0.1, 0.1, 0.2, 0.2])
+
+        num_readers_to_use = FLAGS.num_readers if FLAGS.run_on_cloud else 2
+        num_preprocessing_threads_to_use = FLAGS.num_preprocessing_threads if FLAGS.run_on_cloud else 2
+
         list_from_batch, _ = dataset_factory.get_dataset(FLAGS.dataset_name,
                                                 FLAGS.dataset_split_name,
                                                 FLAGS.data_dir,
                                                 image_preprocessing_fn,
                                                 file_pattern = None,
                                                 reader = None,
-                                                batch_size = FLAGS.batch_size,
-                                                num_readers = FLAGS.num_readers,
-                                                num_preprocessing_threads = FLAGS.num_preprocessing_threads,
-                                                num_epochs = FLAGS.train_epochs,
+                                                batch_size = 1,
+                                                num_readers = num_readers_to_use,
+                                                num_preprocessing_threads = num_preprocessing_threads_to_use,
+                                                num_epochs = 1,
+                                                method = 'eval',
                                                 anchor_encoder = anchor_encoder_decoder.encode_all_anchors)
 
         return list_from_batch[-1], {'targets': list_from_batch[:-1],
@@ -179,27 +167,170 @@ def modified_smooth_l1(bbox_pred, bbox_targets, bbox_inside_weights = 1., bbox_o
 
     return outside_mul
 
+if not FLAGS.run_on_cloud:
+    from scipy.misc import imread, imsave, imshow, imresize
+    from utility import draw_toolbox
+
+def save_image_with_bbox(image, labels_, scores_, bboxes_):
+    if not hasattr(save_image_with_bbox, "counter"):
+        save_image_with_bbox.counter = 0  # it doesn't exist yet, so initialize it
+    save_image_with_bbox.counter += 1
+
+    img_to_draw = np.copy(image)#common_preprocessing.np_image_unwhitened(image))
+    if not FLAGS.run_on_cloud:
+        img_to_draw = draw_toolbox.bboxes_draw_on_img(img_to_draw, labels_, scores_, bboxes_, thickness=2)
+        imsave(os.path.join(FLAGS.debug_dir, '{}.jpg').format(save_image_with_bbox.counter), img_to_draw)
+    return save_image_with_bbox.counter#np.array([save_image_with_bbox.counter])
+
+
+#[feature_h, feature_w, num_anchors, 4]
+# only support batch_size 1
+def bboxes_eval(org_image, image_shape, bbox_img, cls_pred_logits, bboxes_pred, glabels_raw, gbboxes_raw, isdifficult, num_classes):
+    # Performing post-processing on CPU: loop-intensive, usually more efficient.
+    cls_pred_prob = tf.nn.softmax(tf.reshape(cls_pred_logits, [-1, num_classes]))
+    bboxes_pred = tf.reshape(bboxes_pred, [-1, 4])
+    glabels_raw = tf.reshape(glabels_raw, [-1])
+    gbboxes_raw = tf.reshape(gbboxes_raw, [-1])
+    gbboxes_raw = tf.boolean_mask(gbboxes_raw, glabels_raw > 0)
+    glabels_raw = tf.boolean_mask(glabels_raw, glabels_raw > 0)
+    isdifficult = tf.reshape(isdifficult, [-1])
+
+    with tf.device('/device:CPU:0'):
+        selected_scores, selected_bboxes = eval_helper.tf_bboxes_select([cls_pred_prob], [bboxes_pred], FLAGS.select_threshold, num_classes, scope='xdet_v2_select')
+
+        selected_bboxes = eval_helper.bboxes_clip(bbox_img, selected_bboxes)
+        selected_scores, selected_bboxes = eval_helper.filter_boxes(selected_scores, selected_bboxes, 0.03, image_shape, [FLAGS.train_image_size] * 2, keep_top_k = FLAGS.nms_topk * 2)
+
+        # Resize bboxes to original image shape.
+        selected_bboxes = eval_helper.bboxes_resize(bbox_img, selected_bboxes)
+
+        selected_scores, selected_bboxes = eval_helper.bboxes_sort(selected_scores, selected_bboxes, top_k=FLAGS.nms_topk * 2)
+
+        # Apply NMS algorithm.
+        selected_scores, selected_bboxes = eval_helper.bboxes_nms_batch(selected_scores, selected_bboxes,
+                                 nms_threshold=FLAGS.nms_threshold,
+                                 keep_top_k=FLAGS.nms_topk)
+
+        # label_scores, pred_labels, bboxes_pred = eval_helper.xdet_predict(bbox_img, cls_pred_prob, bboxes_pred, image_shape, FLAGS.train_image_size, FLAGS.nms_threshold, FLAGS.select_threshold, FLAGS.nms_topk, num_classes, nms_mode='union')
+
+        dict_metrics = {}
+        # Compute TP and FP statistics.
+        num_gbboxes, tp, fp = eval_helper.bboxes_matching_batch(selected_scores.keys(), selected_scores, selected_bboxes, glabels_raw, gbboxes_raw, isdifficult)
+
+        # FP and TP metrics.
+        tp_fp_metric = metrics.streaming_tp_fp_arrays(num_gbboxes, tp, fp, selected_scores)
+        metrics_name = ('nobjects', 'ndetections', 'tp', 'fp', 'scores')
+        for c in tp_fp_metric[0].keys():
+            for _ in range(len(tp_fp_metric[0][c])):
+                dict_metrics['tp_fp_%s_%s' % (label2name_table[c], metrics_name[_])] = (tp_fp_metric[0][c][_],
+                                                tp_fp_metric[1][c][_])
+
+        # Add to summaries precision/recall values.
+        aps_voc07 = {}
+        aps_voc12 = {}
+        for c in tp_fp_metric[0].keys():
+            # Precison and recall values.
+            prec, rec = metrics.precision_recall(*tp_fp_metric[0][c])
+
+            # Average precision VOC07.
+            v = metrics.average_precision_voc07(prec, rec)
+            summary_name = 'AP_VOC07/%s' % c
+            op = tf.summary.scalar(summary_name, v)
+            # op = tf.Print(op, [v], summary_name)
+            #tf.add_to_collection(tf.GraphKeys.SUMMARIES, op)
+            aps_voc07[c] = v
+
+            # Average precision VOC12.
+            v = metrics.average_precision_voc12(prec, rec)
+            summary_name = 'AP_VOC12/%s' % c
+            op = tf.summary.scalar(summary_name, v)
+            # op = tf.Print(op, [v], summary_name)
+            #tf.add_to_collection(tf.GraphKeys.SUMMARIES, op)
+            aps_voc12[c] = v
+
+        # Mean average precision VOC07.
+        summary_name = 'AP_VOC07/mAP'
+        mAP = tf.add_n(list(aps_voc07.values())) / len(aps_voc07)
+        mAP = tf.Print(mAP, [mAP], summary_name)
+        op = tf.summary.scalar(summary_name, mAP)
+        #tf.add_to_collection(tf.GraphKeys.SUMMARIES, op)
+
+        # Mean average precision VOC12.
+        summary_name = 'AP_VOC12/mAP'
+        mAP = tf.add_n(list(aps_voc12.values())) / len(aps_voc12)
+        mAP = tf.Print(mAP, [mAP], summary_name)
+        op = tf.summary.scalar(summary_name, mAP)
+        #tf.add_to_collection(tf.GraphKeys.SUMMARIES, op)
+
+        labels_list = []
+        for k, v in selected_scores.items():
+            labels_list.append(tf.ones_like(v, tf.int32) * k)
+        save_image_op = tf.py_func(save_image_with_bbox,
+                                    [org_image,
+                                    tf.concat(labels_list, axis=0),
+                                    #tf.convert_to_tensor(list(selected_scores.keys()), dtype=tf.int64),
+                                    tf.concat(list(selected_scores.values()), axis=0),
+                                    tf.concat(list(selected_bboxes.values()), axis=0)],
+                                    tf.int64, stateful=True)
+
+        #dict_metrics['save_image_with_bboxes'] = save_image_count#tf.tuple([save_image_count, save_image_count_update_op])
+    # for i, v in enumerate(l_precisions):
+    #     summary_name = 'eval/precision_at_recall_%.2f' % LIST_RECALLS[i]
+    #     op = tf.summary.scalar(summary_name, v, collections=[])
+    #     op = tf.Print(op, [v], summary_name)
+    #     tf.add_to_collection(tf.GraphKeys.SUMMARIES, op)
+    # print(dict_metrics)
+    # metric_names = dict_metrics.keys()
+    # value_ops, update_ops = zip(*dict_metrics.values())
+    # return dict(zip(metric_names, update_ops)), save_image_op
+
+    return dict_metrics, save_image_op
+
 def xdet_model_fn(features, labels, mode, params):
     """Our model_fn for ResNet to be used with our Estimator."""
     num_anchors_list = labels['num_anchors_list']
     num_feature_layers = len(num_anchors_list)
 
     shape = labels['targets'][-1]
+    if mode != tf.estimator.ModeKeys.TRAIN:
+        org_image = labels['targets'][-2]
+        isdifficult = labels['targets'][-3]
+        bbox_img = labels['targets'][-4]
+        gbboxes_raw = labels['targets'][-5]
+        glabels_raw = labels['targets'][-6]
+
     glabels = labels['targets'][:num_feature_layers][0]
     gtargets = labels['targets'][num_feature_layers : 2 * num_feature_layers][0]
     gscores = labels['targets'][2 * num_feature_layers : 3 * num_feature_layers][0]
 
     with tf.variable_scope(params['model_scope'], default_name = None, values = [features], reuse=tf.AUTO_REUSE):
-        backbone = xdet_body.xdet_resnet_v2(params['resnet_size'], params['data_format'])
-        multi_merged_feature = backbone(inputs=features, is_training=(mode == tf.estimator.ModeKeys.TRAIN))
+        backbone = xdet_body_v3.xdet_resnet_v3(params['resnet_size'], params['data_format'])
+        body_cls_output, body_regress_output = backbone(inputs=features, is_training=(mode == tf.estimator.ModeKeys.TRAIN))
 
-        cls_pred, location_pred = xdet_body.xdet_head(multi_merged_feature, params['num_classes'], num_anchors_list[0], (mode == tf.estimator.ModeKeys.TRAIN), data_format=params['data_format'])
+        cls_pred, location_pred = xdet_body_v3.xdet_head(body_cls_output, body_regress_output, params['num_classes'], num_anchors_list[0], (mode == tf.estimator.ModeKeys.TRAIN), data_format=params['data_format'])
 
     if params['data_format'] == 'channels_first':
         cls_pred = tf.transpose(cls_pred, [0, 2, 3, 1])
         location_pred = tf.transpose(location_pred, [0, 2, 3, 1])
+        #org_image = tf.transpose(org_image, [0, 2, 3, 1])
+    # batch size is 1
+    shape = tf.squeeze(shape, axis = 0)
+    glabels = tf.squeeze(glabels, axis = 0)
+    gtargets = tf.squeeze(gtargets, axis = 0)
+    gscores = tf.squeeze(gscores, axis = 0)
+    cls_pred = tf.squeeze(cls_pred, axis = 0)
+    location_pred = tf.squeeze(location_pred, axis = 0)
+    if mode != tf.estimator.ModeKeys.TRAIN:
+        org_image = tf.squeeze(org_image, axis = 0)
+        isdifficult = tf.squeeze(isdifficult, axis = 0)
+        gbboxes_raw = tf.squeeze(gbboxes_raw, axis = 0)
+        glabels_raw = tf.squeeze(glabels_raw, axis = 0)
+        bbox_img = tf.squeeze(bbox_img, axis = 0)
 
-    bboxes_pred = labels['decode_fn'](location_pred)#(tf.reshape(location_pred, tf.shape(location_pred).as_list()[0:-1] + [-1, 4]))
+    bboxes_pred = labels['decode_fn'](location_pred)#(tf.reshape(location_pred, location_pred.get_shape().as_list()[:-1] + [-1, 4]))#(location_pred)#
+
+    eval_ops, save_image_op = bboxes_eval(org_image, shape, bbox_img, cls_pred, bboxes_pred, glabels_raw, gbboxes_raw, isdifficult, params['num_classes'])
+    _ = tf.identity(save_image_op, name='save_image_with_bboxes_op')
 
     cls_pred = tf.reshape(cls_pred, [-1, params['num_classes']])
     location_pred = tf.reshape(location_pred, [-1, 4])
@@ -247,13 +378,6 @@ def xdet_model_fn(features, labels, mode, params):
     cls_pred = tf.boolean_mask(cls_pred, tf.stop_gradient(final_mask))
     location_pred = tf.boolean_mask(location_pred, tf.stop_gradient(positive_mask))
     gtargets = tf.boolean_mask(gtargets, tf.stop_gradient(positive_mask))
-    predictions = {
-        'classes': tf.argmax(cls_pred, axis=-1),
-        'probabilities': tf.reduce_max(tf.nn.softmax(cls_pred, name='softmax_tensor'), axis=-1),
-        'bboxes_predict': tf.reshape(bboxes_pred, [-1, 4]) }
-
-    if mode == tf.estimator.ModeKeys.PREDICT:
-        return tf.estimator.EstimatorSpec(mode=mode, predictions=predictions)
 
     # Calculate loss, which includes softmax cross entropy and L2 regularization.
     cross_entropy = tf.cond(n_positives > 0., lambda: tf.losses.sparse_softmax_cross_entropy(labels=glabels, logits=cls_pred), lambda: 0.)
@@ -270,49 +394,31 @@ def xdet_model_fn(features, labels, mode, params):
     tf.summary.scalar('location_loss', loc_loss)
     tf.losses.add_loss(loc_loss)
 
-    # Add weight decay to the loss. We exclude the batch norm variables because
-    # doing so leads to a small improvement in accuracy.
-    loss = 1.3 * (cross_entropy + loc_loss) + params['weight_decay'] * tf.add_n(
-      [tf.nn.l2_loss(v) for v in tf.trainable_variables()
-       if 'batch_normalization' not in v.name])
-    total_loss = tf.identity(loss, name='total_loss')
+    with tf.control_dependencies([save_image_op]):
+        # Add weight decay to the loss. We exclude the batch norm variables because
+        # doing so leads to a small improvement in accuracy.
+        loss = cross_entropy + loc_loss + params['weight_decay'] * tf.add_n(
+          [tf.nn.l2_loss(v) for v in tf.trainable_variables()
+           if 'batch_normalization' not in v.name])
+        total_loss = tf.identity(loss, name='total_loss')
 
-    if mode == tf.estimator.ModeKeys.TRAIN:
-        global_step = tf.train.get_or_create_global_step()
+    predictions = {
+        'classes': tf.argmax(cls_pred, axis=-1),
+        'probabilities': tf.reduce_max(tf.nn.softmax(cls_pred, name='softmax_tensor'), axis=-1),
+        'bboxes_predict': tf.reshape(bboxes_pred, [-1, 4]),
+        'saved_image_index': save_image_op }
 
-        lr_values = [params['learning_rate'] * decay for decay in params['lr_decay_factors']]
-        learning_rate = tf.train.piecewise_constant(tf.cast(global_step, tf.int32),
-                                                    [int(_) for _ in params['decay_boundaries']],
-                                                    lr_values)
-        truncated_learning_rate = tf.maximum(learning_rate, tf.constant(params['end_learning_rate'], dtype=learning_rate.dtype))
-        # Create a tensor named learning_rate for logging purposes.
-        tf.identity(truncated_learning_rate, name='learning_rate')
-        tf.summary.scalar('learning_rate', truncated_learning_rate)
+    summary_hook = tf.train.SummarySaverHook(
+                        save_secs=FLAGS.save_summary_steps,
+                        output_dir=FLAGS.model_dir,
+                        summary_op=tf.summary.merge_all())
 
-        optimizer = tf.train.MomentumOptimizer(learning_rate=truncated_learning_rate,
-                                                momentum=params['momentum'])
-
-        # Batch norm requires update_ops to be added as a train_op dependency.
-        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-        with tf.control_dependencies(update_ops):
-            train_op = optimizer.minimize(loss, global_step)
+    if mode == tf.estimator.ModeKeys.EVAL:
+        return tf.estimator.EstimatorSpec(mode=mode, predictions=predictions,
+                        evaluation_hooks = [summary_hook],
+                        loss=loss, eval_metric_ops=eval_ops)#=eval_ops)
     else:
-        train_op = None
-
-    cls_accuracy = tf.metrics.accuracy(glabels, predictions['classes'])
-    metrics = {'cls_accuracy': cls_accuracy}
-
-    # Create a tensor named train_accuracy for logging purposes.
-    tf.identity(cls_accuracy[1], name='cls_accuracy')
-    tf.summary.scalar('cls_accuracy', cls_accuracy[1])
-
-    return tf.estimator.EstimatorSpec(
-          mode=mode,
-          predictions=predictions,
-          loss=loss,
-          train_op=train_op,
-          eval_metric_ops=metrics,
-          scaffold = tf.train.Scaffold(init_fn=train_helper.get_init_fn_for_scaffold(FLAGS)))
+        raise ValueError('This script only support predict mode!')
 
 def parse_comma_list(args):
     return [float(s.strip()) for s in args.split(',')]
@@ -324,9 +430,9 @@ def main(_):
     gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = FLAGS.gpu_memory_fraction)
     config = tf.ConfigProto(allow_soft_placement = True, log_device_placement = False, intra_op_parallelism_threads = FLAGS.num_cpu_threads, inter_op_parallelism_threads = FLAGS.num_cpu_threads, gpu_options = gpu_options)
 
-    # Set up a RunConfig to only save checkpoints once per training cycle.
+    # Set up RunConfig
     run_config = tf.estimator.RunConfig().replace(
-                                        save_checkpoints_secs=FLAGS.save_checkpoints_secs).replace(
+                                        save_checkpoints_secs=None).replace(
                                         save_checkpoints_steps=None).replace(
                                         save_summary_steps=FLAGS.save_summary_steps).replace(
                                         keep_checkpoint_max=5).replace(
@@ -344,28 +450,20 @@ def main(_):
             'match_threshold': FLAGS.match_threshold,
             'neg_threshold': FLAGS.neg_threshold,
             'weight_decay': FLAGS.weight_decay,
-            'momentum': FLAGS.momentum,
-            'learning_rate': FLAGS.learning_rate,
-            'end_learning_rate': FLAGS.end_learning_rate,
-            'learning_rate_decay_factor': FLAGS.learning_rate_decay_factor,
-            'decay_steps': FLAGS.decay_steps,
-            'decay_boundaries': parse_comma_list(FLAGS.decay_boundaries),
-            'lr_decay_factors': parse_comma_list(FLAGS.lr_decay_factors),
         })
 
 
     tensors_to_log = {
-        'learning_rate': 'learning_rate',
-        'cross_entropy_loss': 'cross_entropy_loss',
-        'location_loss': 'location_loss',
+        'ce_loss': 'cross_entropy_loss',
+        'loc_loss': 'location_loss',
         'total_loss': 'total_loss',
-        'cls_accuracy': 'cls_accuracy',
+        'saved_image_index':'save_image_with_bboxes_op'
     }
 
     logging_hook = tf.train.LoggingTensorHook(tensors=tensors_to_log, every_n_iter=FLAGS.log_every_n_steps)
 
-    print('Starting a training cycle.')
-    xdetector.train(input_fn=input_pipeline(), hooks=[logging_hook])
+    print('Starting evaluate cycle.')
+    xdetector.evaluate(input_fn=input_pipeline(), hooks=[logging_hook], checkpoint_path=train_helper.get_latest_checkpoint_for_evaluate(FLAGS))
 
 if __name__ == '__main__':
   tf.logging.set_verbosity(tf.logging.INFO)

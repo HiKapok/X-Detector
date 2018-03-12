@@ -8,7 +8,7 @@ import sys
 #from scipy.misc import imread, imsave, imshow, imresize
 import tensorflow as tf
 
-from net import xdet_body
+from net import xdet_body_v3
 from utility import train_helper
 
 from dataset import dataset_factory
@@ -39,7 +39,7 @@ tf.app.flags.DEFINE_integer(
 tf.app.flags.DEFINE_string(
     'dataset_split_name', 'train', 'The name of the train/test split.')
 tf.app.flags.DEFINE_string(
-    'model_dir', './logs/',
+    'model_dir', './logs_v3/',
     'The directory where the model will be stored.')
 tf.app.flags.DEFINE_integer(
     'log_every_n_steps', 10,
@@ -52,7 +52,7 @@ tf.app.flags.DEFINE_integer(
     'The frequency with which the model is saved, in seconds.')
 # model related configuration
 tf.app.flags.DEFINE_integer(
-    'train_image_size', 320,
+    'train_image_size', 352,
     'The size of the input image for the model to use.')
 tf.app.flags.DEFINE_integer(
     'resnet_size', 50,
@@ -61,7 +61,7 @@ tf.app.flags.DEFINE_integer(
     'train_epochs', None,
     'The number of epochs to use for training.')
 tf.app.flags.DEFINE_integer(
-    'batch_size', 18,
+    'batch_size', 12,
     'Batch size for training and evaluation.')
 tf.app.flags.DEFINE_string(
     'data_format', 'channels_first', # 'channels_first' or 'channels_last'
@@ -83,7 +83,7 @@ tf.app.flags.DEFINE_float(
     'The momentum for the MomentumOptimizer and RMSPropOptimizer.')
 tf.app.flags.DEFINE_float('learning_rate', 0.001, 'Initial learning rate.')
 tf.app.flags.DEFINE_float(
-    'end_learning_rate', 0.0001,
+    'end_learning_rate', 0.00005,
     'The minimal end learning rate used by a polynomial decay learning rate.')
 # for learning rate exponential_decay
 tf.app.flags.DEFINE_float(
@@ -93,10 +93,10 @@ tf.app.flags.DEFINE_float(
     'Number of epochs after which learning rate decays.')
 # for learning rate piecewise_constant decay
 tf.app.flags.DEFINE_string(
-    'decay_boundaries', '70000, 90000',
+    'decay_boundaries', '60000, 800000',
     'Learning rate decay boundaries by global_step (comma-separated list).')
 tf.app.flags.DEFINE_string(
-    'lr_decay_factors', '1, 0.8, 0.1',
+    'lr_decay_factors', '1, 0.6, 0.1',
     'The values of learning_rate decay factor for each segment between boundaries (comma-separated list).')
 # checkpoint related configuration
 tf.app.flags.DEFINE_string(
@@ -120,7 +120,7 @@ tf.app.flags.DEFINE_boolean(
 tf.app.flags.DEFINE_string(
     'cloud_checkpoint_path', 'resnet50/model.ckpt',
     'The path to a checkpoint from which to fine-tune.')
-#CUDA_VISIBLE_DEVICES
+
 FLAGS = tf.app.flags.FLAGS
 
 def input_pipeline():
@@ -128,18 +128,18 @@ def input_pipeline():
         'xdet_resnet', is_training=True)(image_, glabels_, gbboxes_, out_shape=[FLAGS.train_image_size] * 2, data_format=('NCHW' if FLAGS.data_format=='channels_first' else 'NHWC'))
 
     anchor_creator = anchor_manipulator.AnchorCreator([FLAGS.train_image_size] * 2,
-                                                    layers_shapes = [(40, 40)],
+                                                    layers_shapes = [(22, 22)],
                                                     anchor_scales = [[0.05, 0.1, 0.25, 0.4, 0.55, 0.7, 0.85]],
                                                     extra_anchor_scales = [[]],
                                                     anchor_ratios = [[1., 2., 3., .5, 0.3333]],
-                                                    layer_steps = [8])
+                                                    layer_steps = [16])
 
     def input_fn():
         all_anchors, num_anchors_list = anchor_creator.get_all_anchors()
 
         anchor_encoder_decoder = anchor_manipulator.AnchorEncoder(all_anchors,
                                         num_classes = FLAGS.num_classes,
-                                        allowed_borders = [0.1],
+                                        allowed_borders = [0.13],
                                         ignore_threshold = FLAGS.match_threshold, # only update labels for positive examples
                                         prior_scaling=[0.1, 0.1, 0.2, 0.2])
         list_from_batch, _ = dataset_factory.get_dataset(FLAGS.dataset_name,
@@ -190,10 +190,10 @@ def xdet_model_fn(features, labels, mode, params):
     gscores = labels['targets'][2 * num_feature_layers : 3 * num_feature_layers][0]
 
     with tf.variable_scope(params['model_scope'], default_name = None, values = [features], reuse=tf.AUTO_REUSE):
-        backbone = xdet_body.xdet_resnet_v2(params['resnet_size'], params['data_format'])
-        multi_merged_feature = backbone(inputs=features, is_training=(mode == tf.estimator.ModeKeys.TRAIN))
+        backbone = xdet_body_v3.xdet_resnet_v3(params['resnet_size'], params['data_format'])
+        body_cls_output, body_regress_output = backbone(inputs=features, is_training=(mode == tf.estimator.ModeKeys.TRAIN))
 
-        cls_pred, location_pred = xdet_body.xdet_head(multi_merged_feature, params['num_classes'], num_anchors_list[0], (mode == tf.estimator.ModeKeys.TRAIN), data_format=params['data_format'])
+        cls_pred, location_pred = xdet_body_v3.xdet_head(body_cls_output, body_regress_output, params['num_classes'], num_anchors_list[0], (mode == tf.estimator.ModeKeys.TRAIN), data_format=params['data_format'])
 
     if params['data_format'] == 'channels_first':
         cls_pred = tf.transpose(cls_pred, [0, 2, 3, 1])
@@ -238,6 +238,7 @@ def xdet_model_fn(features, labels, mode, params):
     #                                                                                     tf.divide(tf.cast(n_neg_to_select, tf.float32), n_negtives),
     #                                                                                     tf.zeros_like(tf.cast(n_neg_to_select, tf.float32)),
     #                                                                                     name='rand_select_negtive')
+
     # include both selected negtive and all positive examples
     final_mask = tf.stop_gradient(tf.logical_or(tf.logical_and(negtive_mask, selected_neg_mask), positive_mask))
     total_examples = tf.reduce_sum(tf.cast(final_mask, tf.float32))
@@ -272,7 +273,7 @@ def xdet_model_fn(features, labels, mode, params):
 
     # Add weight decay to the loss. We exclude the batch norm variables because
     # doing so leads to a small improvement in accuracy.
-    loss = 1.3 * (cross_entropy + loc_loss) + params['weight_decay'] * tf.add_n(
+    loss = cross_entropy + loc_loss + params['weight_decay'] * tf.add_n(
       [tf.nn.l2_loss(v) for v in tf.trainable_variables()
        if 'batch_normalization' not in v.name])
     total_loss = tf.identity(loss, name='total_loss')
@@ -353,13 +354,12 @@ def main(_):
             'lr_decay_factors': parse_comma_list(FLAGS.lr_decay_factors),
         })
 
-
     tensors_to_log = {
-        'learning_rate': 'learning_rate',
-        'cross_entropy_loss': 'cross_entropy_loss',
-        'location_loss': 'location_loss',
+        'lr': 'learning_rate',
+        'ce_loss': 'cross_entropy_loss',
+        'loc_loss': 'location_loss',
         'total_loss': 'total_loss',
-        'cls_accuracy': 'cls_accuracy',
+        'cls_acc': 'cls_accuracy',
     }
 
     logging_hook = tf.train.LoggingTensorHook(tensors=tensors_to_log, every_n_iter=FLAGS.log_every_n_steps)

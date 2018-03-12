@@ -54,7 +54,8 @@ def xdet_bottleneck_block(inputs, filters, is_training, projection_shortcut,
 
   inputs = resnet_v2.batch_norm_relu(inputs, is_training, data_format)
   inputs = dilate_conv2d(
-      inputs=inputs, filters=filters, kernel_size=3, dilation_rate=dilation_rate, data_format=data_format)
+      inputs=inputs, filters=filters, kernel_size=3, dilation_rate=dilation_rate,
+      data_format=data_format)
 
   inputs = resnet_v2.batch_norm_relu(inputs, is_training, data_format)
   # default activation is None
@@ -104,7 +105,38 @@ def xdet_block_layer(inputs, filters, block_fn, blocks, dilation_rate, is_traini
 
   return tf.identity(inputs, name)
 
-def xdet_resnet_v2_generator(block_fn, layers, data_format=None):
+def SEBlock(inputs, filters, data_format, is_training, rate = 8):
+    # new_shape = x.get_shape().as_list()
+    # new_shape[1] *= 2
+    # new_shape[2] *= 2
+    # new_shape[3] = to_channel_num
+
+    # upsampled_x = tf.image.resize_images(x, new_shape[1:3])
+    # ( input_iamge_size / 16 - (5 - 1) ) / 3, use suitable input_iamge_size to produce integer here
+    #inputs = resnet_v2.batch_norm_relu(inputs, is_training, data_format)
+    inputs = tf.layers.separable_conv2d(inputs, filters/rate, 5, strides = 3, padding='VALID', data_format=data_format,
+                              activation = None, use_bias = True,
+                              depthwise_initializer = initializer_to_use(),
+                              pointwise_initializer = initializer_to_use(),
+                              bias_initializer = tf.zeros_initializer())
+    inputs = tf.nn.relu(inputs)
+    inputs = tf.layers.conv2d(inputs=inputs, filters=filters, kernel_size = 1, strides = 1, dilation_rate = 1,
+                  padding='SAME', use_bias=True, activation = tf.sigmoid,
+                  kernel_initializer=initializer_to_use(),
+                  bias_initializer=tf.zeros_initializer(),
+                  data_format=data_format)
+
+    if data_format == 'channels_first':
+      inputs = tf.transpose(inputs, [0, 2, 3, 1])
+
+    input_shape = tf.shape(inputs)[-3:-1]
+    # use default ResizeMethod.BILINEAR to zoom-in the input size
+    outputs = tf.image.resize_images(inputs, input_shape * 3 + (5 - 1))
+    if data_format == 'channels_first':
+      outputs = tf.transpose(outputs, [0, 3, 1, 2])
+    return outputs
+
+def xdet_resnet_v3_generator(block_fn, layers, data_format=None):
   """Generator for X-Det ResNet v2 models.
 
   Args:
@@ -149,60 +181,58 @@ def xdet_resnet_v2_generator(block_fn, layers, data_format=None):
         inputs=inputs, filters=128, block_fn=block_fn, blocks=layers[1],
         strides=2, is_training=is_training, name='block_layer2',
         data_format=data_format)
-    output_conv4 = xdet_block_layer(
-        inputs=inputs, filters=256, block_fn=xdet_bottleneck_block, blocks=layers[2],
-        dilation_rate=2, is_training=is_training, name='block_layer3',
+    inputs = resnet_v2.block_layer(
+        inputs=inputs, filters=256, block_fn=block_fn, blocks=layers[2],
+        strides=2, is_training=is_training, name='block_layer3',
         data_format=data_format)
     output_conv5 = xdet_block_layer(
-        inputs=output_conv4, filters=512, block_fn=xdet_bottleneck_block, blocks=layers[3],
-        dilation_rate=4, is_training=is_training, name='block_layer4',
+        inputs=inputs, filters=512, block_fn=xdet_bottleneck_block, blocks=layers[3],
+        dilation_rate=2, is_training=is_training, name='block_layer4',
         data_format=data_format)
     with tf.variable_scope('xdet_additional_conv', default_name = None, values = [output_conv5], reuse=tf.AUTO_REUSE):
       output_conv6 = xdet_block_layer(
           inputs=output_conv5, filters=512, block_fn=xdet_bottleneck_block, blocks=layers[4],
-          dilation_rate=8, is_training=is_training, name='block_layer5',
+          dilation_rate=4, is_training=is_training, name='block_layer5',
           data_format=data_format)
-    with tf.variable_scope('xdet_multi_path', default_name = None, values = [output_conv4, output_conv5, output_conv6], reuse=tf.AUTO_REUSE):
-      output_conv4 = resnet_v2.batch_norm_relu(output_conv4, is_training, data_format)
-      output_conv4 = tf.layers.conv2d(inputs=output_conv4, filters=256, kernel_size=1, strides=1,
-                                  padding='SAME', use_bias=True, activation=None,
-                                  kernel_initializer=initializer_to_use(),
-                                  bias_initializer=tf.zeros_initializer(),
-                                  data_format=data_format)
+      output_conv7 = xdet_block_layer(
+          inputs=output_conv6, filters=512, block_fn=xdet_bottleneck_block, blocks=layers[4],
+          dilation_rate=8, is_training=is_training, name='block_layer6',
+          data_format=data_format)
+    with tf.variable_scope('xdet_multi_path', default_name = None, values = [output_conv5, output_conv6, output_conv7], reuse=tf.AUTO_REUSE):
       output_conv5 = resnet_v2.batch_norm_relu(output_conv5, is_training, data_format)
       output_conv5 = tf.layers.conv2d(inputs=output_conv5, filters=256, kernel_size=1, strides=1,
-                                  padding='SAME', use_bias=True, activation=None,
+                                  padding='SAME', use_bias=False, activation=None,
                                   kernel_initializer=initializer_to_use(),
-                                  bias_initializer=tf.zeros_initializer(),
+                                  bias_initializer=None,#tf.zeros_initializer(),
                                   data_format=data_format)
       output_conv6 = resnet_v2.batch_norm_relu(output_conv6, is_training, data_format)
       output_conv6 = tf.layers.conv2d(inputs=output_conv6, filters=256, kernel_size=1, strides=1,
-                                  padding='SAME', use_bias=True, activation=None,
+                                  padding='SAME', use_bias=False, activation=None,
                                   kernel_initializer=initializer_to_use(),
-                                  bias_initializer=tf.zeros_initializer(),
+                                  bias_initializer=None,#tf.zeros_initializer(),
+                                  data_format=data_format)
+      output_conv7 = resnet_v2.batch_norm_relu(output_conv7, is_training, data_format)
+      output_conv7 = tf.layers.conv2d(inputs=output_conv7, filters=256, kernel_size=1, strides=1,
+                                  padding='SAME', use_bias=False, activation=None,
+                                  kernel_initializer=initializer_to_use(),
+                                  bias_initializer=None,#tf.zeros_initializer(),
                                   data_format=data_format)
       if data_format == 'channels_first':
-        concat_output = tf.concat([output_conv4, output_conv5, output_conv6], axis = 1)
+        concat_output = tf.concat([output_conv5, output_conv6, output_conv7], axis = 1)
       else:
-        concat_output = tf.concat([output_conv4, output_conv5, output_conv6], axis = -1)
-      # use batch_norm or only Relu? (modify the bias above)
-      inputs = tf.nn.relu(concat_output)
-      #inputs = resnet_v2.batch_norm_relu(concat_output, is_training, data_format)
+        concat_output = tf.concat([output_conv5, output_conv6, output_conv7], axis = -1)
 
-      inputs = depth_conv2d.depth_conv2d(inputs, 3, stride=1,
-                                      padding='SAME',
-                                      data_format=(depth_conv2d.DATA_FORMAT_NCHW if data_format == 'channels_first' else depth_conv2d.DATA_FORMAT_NHWC),
-                                      rate=1,
-                                      activation_fn=None,
-                                      normalizer_fn=None,
-                                      weights_initializer=initializer_to_use())
-      # it has been proved in Xception that BN and Relu after depth-wise conv may lose information
-      # so they just add that in the whole seperable conv
-      # but is it better to add BN or Relu here? (both BN and Relu will cut-off information)
-      # return bresnet_v2.atch_norm_relu(concat_output, is_training, data_format)
-      return inputs
+      concat_output = resnet_v2.batch_norm_only(concat_output, is_training, data_format)
+
+      with tf.variable_scope('xdet_cls_seblock', default_name = None, values = [concat_output], reuse=tf.AUTO_REUSE):
+        cls_seblock_output = SEBlock(concat_output, 256 * 3, data_format, is_training)
+      with tf.variable_scope('xdet_regress_seblock', default_name = None, values = [concat_output], reuse=tf.AUTO_REUSE):
+        regress_seblock_output = SEBlock(concat_output, 256 * 3, data_format, is_training)
+
+      return tf.nn.relu(concat_output * cls_seblock_output), tf.nn.relu(concat_output * regress_seblock_output)
 
   return model
+
 
 def pred_inception_module(net_input, depth_output, is_training, data_format, var_scope):
   with tf.variable_scope(var_scope):
@@ -226,8 +256,9 @@ def pred_inception_module(net_input, depth_output, is_training, data_format, var
 
     return resnet_v2.batch_norm_relu(net_input, is_training, data_format)
 
-def xdet_head(body_input, num_classes, num_anchors, is_training, data_format=None):
-  with tf.variable_scope('xdet_head', default_name = None, values = [body_input], reuse=tf.AUTO_REUSE):
+
+def xdet_head(body_cls_input, body_regress_input, num_classes, num_anchors, is_training, data_format=None):
+  with tf.variable_scope('xdet_head', default_name = None, values = [body_cls_input, body_regress_input], reuse=tf.AUTO_REUSE):
     if data_format is None:
       data_format = ('channels_first' if tf.test.is_built_with_cuda() else 'channels_last')
 
@@ -237,30 +268,23 @@ def xdet_head(body_input, num_classes, num_anchors, is_training, data_format=Non
 
     # never cause information bottleneck
     # classification module
-    # cls_inputs = body_input
+    # cls_inputs = body_cls_input
     # cls_depth_list = [512, 256]
     # for depth_ in cls_depth_list:
     #   if num_anchors * num_classes < 0.8 * depth_:
     #     cls_inputs = pred_submodule(cls_inputs, depth_)
 
-    cls_inputs = pred_inception_module(body_input, 256, is_training, data_format, 'inception_1')
+    cls_inputs = pred_inception_module(body_cls_input, 256, is_training, data_format, 'inception_1')
     cls_inputs = pred_inception_module(cls_inputs, 256, is_training, data_format, 'inception_2')
 
-
-    # if num_anchors * num_classes < 1024:
-    #   cls_inputs = pred_submodule(cls_inputs, 1024)
-    # if num_anchors * num_classes < 512:
-    #   cls_inputs = pred_submodule(cls_inputs, 512)
-    # if num_anchors * num_classes < 256:
-    #   cls_inputs = pred_submodule(cls_inputs, 256)
-
-    cls_outputs = tf.layers.conv2d(inputs=cls_inputs, filters=num_anchors * num_classes, kernel_size=3, strides=1,
+    cls_outputs = tf.layers.conv2d(
+                                inputs=cls_inputs, filters=num_anchors * num_classes, kernel_size=3, strides=1,
                                 padding='SAME', use_bias=True, activation=None,
                                 kernel_initializer=initializer_to_use(),
                                 data_format=data_format)
 
     # regress module
-    regress_inputs = body_input
+    regress_inputs = body_regress_input
     regress_depth_list = [512, 256]
     for depth_ in regress_depth_list:
       if num_anchors < depth_/(4 + 1):
@@ -274,20 +298,20 @@ def xdet_head(body_input, num_classes, num_anchors, is_training, data_format=Non
 
     return tf.identity(cls_outputs, 'class_module'), tf.identity(regress_outputs, 'location_module')
 
-def xdet_resnet_v2(resnet_size, data_format=None):
+def xdet_resnet_v3(resnet_size, data_format=None):
   """Returns the ResNet model for a given size and number of output classes."""
   model_params = {
-      18: {'block': resnet_v2.building_block, 'layers': [2, 2, 2, 2, 2]},
-      34: {'block': resnet_v2.building_block, 'layers': [3, 4, 6, 3, 3]},
-      50: {'block': resnet_v2.bottleneck_block, 'layers': [3, 4, 6, 3, 3]},
-      101: {'block': resnet_v2.bottleneck_block, 'layers': [3, 4, 23, 3, 3]},
-      152: {'block': resnet_v2.bottleneck_block, 'layers': [3, 8, 36, 3, 3]},
-      200: {'block': resnet_v2.bottleneck_block, 'layers': [3, 24, 36, 3, 3]}
+      18: {'block': resnet_v2.building_block, 'layers': [2, 2, 2, 2, 2, 2]},
+      34: {'block': resnet_v2.building_block, 'layers': [3, 4, 6, 3, 3, 3]},
+      50: {'block': resnet_v2.bottleneck_block, 'layers': [3, 4, 6, 3, 3, 3]},
+      101: {'block': resnet_v2.bottleneck_block, 'layers': [3, 4, 23, 3, 3, 3]},
+      152: {'block': resnet_v2.bottleneck_block, 'layers': [3, 8, 36, 3, 3, 3]},
+      200: {'block': resnet_v2.bottleneck_block, 'layers': [3, 24, 36, 3, 3, 3]}
   }
 
   if resnet_size not in model_params:
     raise ValueError('Not a valid resnet_size:', resnet_size)
 
   params = model_params[resnet_size]
-  return xdet_resnet_v2_generator(
+  return xdet_resnet_v3_generator(
       params['block'], params['layers'], data_format)

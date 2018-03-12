@@ -278,13 +278,13 @@ def slim_get_split(split_name, dataset_dir, file_pattern, reader, image_preproce
 
     # Pre-processing image, labels and bboxes.
     if is_training:
-        image, glabels, gbboxes = image_preprocessing_fn(org_image, shape, glabels_raw, gbboxes_raw)
+        image, glabels_, gbboxes_ = image_preprocessing_fn(org_image, shape, glabels_raw, gbboxes_raw)
     else:
-        image, glabels, gbboxes, bbox_img = image_preprocessing_fn(org_image, shape, glabels_raw, gbboxes_raw)
+        image, glabels_, gbboxes_, bbox_img = image_preprocessing_fn(org_image, shape, glabels_raw, gbboxes_raw)
 
     glabels_raw = tf.cast(glabels_raw, tf.int32)
 
-    glabels, gtargets, gscores, _ = kwargs['anchor_encoder'](glabels, gbboxes)
+    glabels, gtargets, gscores, _ = kwargs['anchor_encoder'](glabels_, gbboxes_)
 
     list_for_batch = []
     for glabel in glabels:
@@ -295,9 +295,13 @@ def slim_get_split(split_name, dataset_dir, file_pattern, reader, image_preproce
         list_for_batch.append(gscore)
 
     if not is_training:
-        list_for_batch.append(bbox_img)
         list_for_batch.append(glabels_raw)
         list_for_batch.append(gbboxes_raw)
+    else:
+        list_for_batch.append(glabels_)
+        list_for_batch.append(gbboxes_)
+    if not is_training:
+        list_for_batch.append(bbox_img)
         list_for_batch.append(isdifficult)
         list_for_batch.append(org_image)
 
@@ -305,7 +309,7 @@ def slim_get_split(split_name, dataset_dir, file_pattern, reader, image_preproce
     list_for_batch.append(image)
 
     return tf.train.batch(list_for_batch,
-                dynamic_pad=(not is_training),
+                dynamic_pad=True,#(not is_training),
                 batch_size = kwargs['batch_size'],
                 allow_smaller_final_batch=(not is_training),
                 num_threads = kwargs['num_preprocessing_threads'],
@@ -381,15 +385,15 @@ def get_split(split_name, dataset_dir, file_pattern, reader, image_preprocessing
             #glabels_raw = tf.cast(isdifficult < tf.ones_like(isdifficult), glabels_raw.dtype) * glabels_raw
 
         if is_training:
-            image, glabels, gbboxes = image_preprocessing_fn(org_image, shape, glabels_raw, gbboxes_raw)
+            image, glabels_, gbboxes_ = image_preprocessing_fn(org_image, shape, glabels_raw, gbboxes_raw)
         else:
-            image, glabels, gbboxes, bbox_img = image_preprocessing_fn(org_image, shape, glabels_raw, gbboxes_raw)
+            image, glabels_, gbboxes_, bbox_img = image_preprocessing_fn(org_image, shape, glabels_raw, gbboxes_raw)
 
         glabels_raw = tf.cast(glabels_raw, tf.int32)
 
         #return image, glabels
 
-        glabels, gtargets, gscores, _ = kwargs['anchor_encoder'](glabels, gbboxes)
+        glabels, gtargets, gscores, _ = kwargs['anchor_encoder'](glabels_, gbboxes_)
 
         list_for_batch = []
         for glabel in glabels:
@@ -400,9 +404,13 @@ def get_split(split_name, dataset_dir, file_pattern, reader, image_preprocessing
             list_for_batch.append(gscore)
 
         if not is_training:
-            list_for_batch.append(bbox_img)
             list_for_batch.append(glabels_raw)
             list_for_batch.append(gbboxes_raw)
+        else:
+            list_for_batch.append(glabels_)
+            list_for_batch.append(gbboxes_)
+        if not is_training:
+            list_for_batch.append(bbox_img)
             list_for_batch.append(isdifficult)
             list_for_batch.append(org_image)
 

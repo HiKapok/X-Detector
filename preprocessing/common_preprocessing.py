@@ -325,6 +325,67 @@ def distorted_bounding_box_crop(image,
                                                    assign_negative=False)
         return cropped_image, labels, bboxes, distort_bbox
 
+def light_head_preprocess_for_train(image, labels, bboxes,
+                             out_shape, data_format='NHWC',
+                             scope='light_head_preprocess_train'):
+    """Preprocesses the given image for training.
+
+    Note that the actual resizing scale is sampled from
+        [`resize_size_min`, `resize_size_max`].
+
+    Args:
+        image: A `Tensor` representing an image of arbitrary size.
+        output_height: The height of the image after preprocessing.
+        output_width: The width of the image after preprocessing.
+        resize_side_min: The lower bound for the smallest side of the image for
+            aspect-preserving resizing.
+        resize_side_max: The upper bound for the smallest side of the image for
+            aspect-preserving resizing.
+
+    Returns:
+        A preprocessed image.
+    """
+    fast_mode = False
+    with tf.name_scope(scope, 'light_head_preprocess_train', [image, labels, bboxes]):
+        if image.get_shape().ndims != 3:
+            raise ValueError('Input must be of size [height, width, C>0]')
+        # Convert to float scaled [0, 1].
+        if image.dtype != tf.float32:
+            image = tf.image.convert_image_dtype(image, dtype=tf.float32)
+        tf_summary_image(image, bboxes, 'image_with_bboxes_0')
+
+        # image, bboxes = control_flow_ops.cond(tf.random_uniform([1], minval=0., maxval=1., dtype=tf.float32)[0] < 0.5, lambda: (image, bboxes), lambda: tf_image.ssd_random_expand(image, bboxes, 2))
+        image, bboxes = control_flow_ops.cond(tf.random_uniform([1], minval=0., maxval=1., dtype=tf.float32)[0] < 0.3, lambda: (image, bboxes), lambda: tf_image.ssd_random_expand(image, bboxes, tf.random_uniform([1], minval=2, maxval=4, dtype=tf.int32)[0]))
+        tf_summary_image(image, bboxes, 'image_on_canvas_1')
+
+        # Distort image and bounding boxes.
+        random_sample_image, labels, bboxes = tf_image.ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.5, 0.7, 0.9, 1.])
+        tf_summary_image(random_sample_image, bboxes, 'image_shape_distorted_2')
+
+        # Randomly flip the image horizontally.
+        random_sample_flip_image, bboxes = tf_image.random_flip_left_right(random_sample_image, bboxes)
+
+        random_sample_flip_resized_image = tf_image.resize_image(random_sample_flip_image, out_shape,
+                                          method=tf.image.ResizeMethod.BILINEAR,
+                                          align_corners=False)
+
+        tf_summary_image(random_sample_flip_resized_image, bboxes, 'image_fliped_and_resized_3')
+
+        # Randomly distort the colors. There are 4 ways to do it.
+        dst_image = apply_with_random_selector(
+                random_sample_flip_resized_image,
+                lambda x, ordering: distort_color(x, ordering, fast_mode),
+                num_cases=4)
+        tf_summary_image(dst_image, bboxes, 'image_color_distorted_4')
+
+        # Rescale to VGG input scale.
+        image = dst_image * 255.
+        image.set_shape([None, None, 3])
+        image = tf_image_whitened(image, [_R_MEAN, _G_MEAN, _B_MEAN])
+        # Image data format.
+        if data_format == 'NCHW':
+            image = tf.transpose(image, perm=(2, 0, 1))
+        return image, labels, bboxes
 
 def preprocess_for_train(image, labels, bboxes,
                          out_shape, data_format='NHWC',
@@ -355,7 +416,8 @@ def preprocess_for_train(image, labels, bboxes,
             image = tf.image.convert_image_dtype(image, dtype=tf.float32)
         tf_summary_image(image, bboxes, 'image_with_bboxes_0')
 
-        image, bboxes = control_flow_ops.cond(tf.random_uniform([1], minval=0., maxval=1., dtype=tf.float32)[0] < 0.5, lambda: (image, bboxes), lambda: tf_image.ssd_random_expand(image, bboxes, 2))
+        # image, bboxes = control_flow_ops.cond(tf.random_uniform([1], minval=0., maxval=1., dtype=tf.float32)[0] < 0.5, lambda: (image, bboxes), lambda: tf_image.ssd_random_expand(image, bboxes, 2))
+        image, bboxes = control_flow_ops.cond(tf.random_uniform([1], minval=0., maxval=1., dtype=tf.float32)[0] < 0.3, lambda: (image, bboxes), lambda: tf_image.ssd_random_expand(image, bboxes, tf.random_uniform([1], minval=2, maxval=4, dtype=tf.int32)[0]))
         tf_summary_image(image, bboxes, 'image_on_canvas_1')
 
         # Distort image and bounding boxes.
@@ -544,3 +606,39 @@ def preprocess_image(image,
                                    out_shape=out_shape,
                                    data_format=data_format,
                                    **kwargs)
+def light_head_preprocess_image(image,
+                     labels,
+                     bboxes,
+                     out_shape,
+                     data_format,
+                     is_training=False,
+                     **kwargs):
+    """Pre-process an given image.
+
+    Args:
+      image: A `Tensor` representing an image of arbitrary size.
+      output_height: The height of the image after preprocessing.
+      output_width: The width of the image after preprocessing.
+      is_training: `True` if we're preprocessing the image for training and
+        `False` otherwise.
+      resize_side_min: The lower bound for the smallest side of the image for
+        aspect-preserving resizing. If `is_training` is `False`, then this value
+        is used for rescaling.
+      resize_side_max: The upper bound for the smallest side of the image for
+        aspect-preserving resizing. If `is_training` is `False`, this value is
+         ignored. Otherwise, the resize side is sampled from
+         [resize_size_min, resize_size_max].
+
+    Returns:
+      A preprocessed image.
+    """
+    if is_training:
+        return light_head_preprocess_for_train(image, labels, bboxes,
+                                            out_shape=out_shape,
+                                            data_format=data_format)
+    else:
+        return preprocess_for_eval(image, labels, bboxes,
+                                   out_shape=out_shape,
+                                   data_format=data_format,
+                                   **kwargs)
+

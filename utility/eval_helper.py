@@ -271,7 +271,7 @@ def pad_axis(x, offset, size, axis=0, name=None):
         x = tf.pad(x, paddings, mode='CONSTANT')
         # Reshape, to get fully defined shape if possible.
         # TODO: fix with tf.slice
-        shape[axis] = size
+        shape[axis] = tf.maximum(size, shape[axis])
         x = tf.reshape(x, tf.stack(shape))
         return x
 

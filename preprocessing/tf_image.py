@@ -513,7 +513,7 @@ def ssd_random_sample_patch_v0(image, labels, bboxes, name=None):
         return control_flow_ops.cond(math_ops.less(sampled_min_iou, 1.), lambda: sample_patch(image, labels, bboxes, sampled_min_iou), lambda: (image, labels, bboxes))
 
 
-def ssd_random_sample_patch(image, labels, bboxes, name=None):
+def ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.1, 0.3, 0.5, 0.7, 0.9, 1.], name=None):
     def sample_width_height(width, height):
         index = 0
         max_attempt = 10
@@ -628,8 +628,8 @@ def ssd_random_sample_patch(image, labels, bboxes, name=None):
         image = ops.convert_to_tensor(image, name='image')
         _Check3DImage(image, require_static=False)
 
-        min_iou_list = tf.convert_to_tensor([0.1, 0.3, 0.5, 0.7, 0.9, 1.])
-        samples_min_iou = tf.multinomial(tf.log([[1./6., 1./6., 1./6., 1./6., 1./6., 1./6.]]), 1)
+        min_iou_list = tf.convert_to_tensor(ratio_list)
+        samples_min_iou = tf.multinomial(tf.log([[1./len(ratio_list), 1./len(ratio_list), 1./len(ratio_list), 1./len(ratio_list), 1./len(ratio_list), 1./len(ratio_list)]]), 1)
 
         sampled_min_iou = min_iou_list[tf.cast(samples_min_iou[0][0], tf.int32)]
 

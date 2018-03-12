@@ -1,3 +1,24 @@
+# MIT License
+
+# Copyright (c) 2018 Changan Wang
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
 import os
 import shutil
 import uuid
@@ -7,136 +28,165 @@ from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
 import math
 
-LIB_NAME = 'ps_roi_pooling'
+LIB_NAME = 'ps_roi_align'
 
 def load_op_module(lib_name):
   """
   Load TensorFlow operator library.
   """
   # use absolute path so that ops.py can be called from other directory
-  lib_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'cpp/build/lib{0}.so'.format(lib_name))
+  lib_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'build/lib{0}.so'.format(lib_name))
   # duplicate library with a random new name so that
   # a running program will not be interrupted when the original library is updated
   lib_copy_path = '/tmp/lib{0}_{1}.so'.format(str(uuid.uuid4())[:8], LIB_NAME)
   shutil.copyfile(lib_path, lib_copy_path)
   oplib = tf.load_op_library(lib_copy_path)
+  #print(_)
   return oplib
 
 op_module = load_op_module(LIB_NAME)
+#print("----",op_module.OP_LIST)
 
-class PSROIPoolingTest(tf.test.TestCase):
-  def testPSROIPooling(self):
-    with tf.device('/gpu:0'):
+# map_to_pool = [[[[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]], [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]], [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]], [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]]]]
+
+map_to_pool = [[
+              [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]],
+              [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]],
+              [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]],
+              [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]],
+
+              [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]],
+              [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]],
+              [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]],
+              [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]],
+
+              [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]],
+              [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]],
+              [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]],
+              [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]],
+
+              [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]],
+              [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]],
+              [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]],
+              [[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.], [11., 12., 13., 14., 15.], [16., 17., 18., 19., 20.], [21., 22., 23., 24., 25.]]
+            ]]
+
+pool_method = 'mean'
+
+class PSROIAlignTest(tf.test.TestCase):
+  def testPSROIAlign(self):
+    with tf.device('/gpu:1'):
       # map C++ operators to python objects
-      ps_roi_pooling = op_module.ps_roi_pooling
-      with self.test_session():
-        result = ps_roi_pooling([[1., 2., 3., 0, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0]], [[1., 0, 0, 0, 0],[0, 1., 0, 0, 0],[0, 0, 1., 0, 0],[0, 0, 0, 1., 0]], [1, 1., 1, 1], 5.)
-        print('ps_roi_pooling in gpu:', result.eval())
+      ps_roi_align = op_module.ps_roi_align
+      result = ps_roi_align(map_to_pool, [[[0.2, 0.2, 0.7, 0.7], [0.5, 0.5, 0.9, 0.9], [0.9, 0.9, 1., 1.]]], 2, 2, pool_method)
+      with self.test_session() as sess:
+        print('ps_roi_align in gpu:', sess.run(result))
     with tf.device('/cpu:0'):
       # map C++ operators to python objects
-      ps_roi_pooling = op_module.ps_roi_pooling
-      with self.test_session():
-        result = ps_roi_pooling([[1., 2., 3., 0, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0]], [[1., 0, 0, 0, 0],[0, 1., 0, 0, 0],[0, 0, 1., 0, 0],[0, 0, 0, 1., 0]], [1, 1., 1, 1], 5.)
-        print('ps_roi_pooling in cpu:', result.eval())
+      ps_roi_align = op_module.ps_roi_align
+      result = ps_roi_align(map_to_pool, [[[0.2, 0.2, 0.7, 0.7], [0.5, 0.5, 0.9, 0.9], [0.9, 0.9, 1., 1.]]], 2, 2, pool_method)
+      with self.test_session() as sess:
+        print('ps_roi_align in cpu:', sess.run(result))
         # expect [3.18034267  0.39960092  0.00709875  2.96500921]
         #self.assertAllEqual(result.eval(), [5, 0, 0, 0, 0])
 
-# @ops.RegisterGradient("PSROIPooling")
-# def _ps_roi_pooling_grad(op, grad):
-#     """The gradients for `ps_roi_pooling`.
+@ops.RegisterGradient("PsRoiAlign")
+def _ps_roi_align_grad(op, grad, _):
+  '''The gradients for `PsRoiAlign`.
+  '''
+  inputs_features = op.inputs[0]
+  rois = op.inputs[1]
+  pooled_features_grad = op.outputs[0]
+  pooled_index = op.outputs[1]
+  grid_dim_width = op.get_attr('grid_dim_width')
+  grid_dim_height = op.get_attr('grid_dim_height')
 
-#     Args:
-#     op: The `ps_roi_pooling` `Operation` that we are differentiating, which we can use
-#       to find the inputs and outputs of the original op.
-#     grad: Gradient with respect to the output of the `ps_roi_pooling` op.
+  return [op_module.ps_roi_align_grad(inputs_features, rois, grad, pooled_index, grid_dim_width, grid_dim_height, pool_method), None]
 
-#     Returns:
-#     Gradients with respect to the input of `ps_roi_pooling`.
-#     """
-#     logits = op.inputs[0]
-#     one_hot_labels = op.inputs[1]
-#     batch_weight = op.inputs[2]
-#     ps_roi_pooling_gamma = op.inputs[3]
-#     ps_roi_pooling = op.outputs[0]
-#     ligits_shape = array_ops.shape(logits)
+class PSROIAlignGradTest(tf.test.TestCase):
+  def testPSROIAlignGrad(self):
+    with tf.device('/cpu:0'):
+      ps_roi_align = op_module.ps_roi_align
+      inputs_features = tf.constant(map_to_pool, dtype=tf.float32)
+      pool_result = ps_roi_align(inputs_features, [[[0.2, 0.2, 0.7, 0.7], [0.5, 0.5, 0.9, 0.9], [0.9, 0.9, 1., 1.]]], 2, 2, pool_method)
+      with tf.Session() as sess:
+        #print(sess.run(tf.gradients(pool_result[0], [inputs_features])))
+        print(tf.test.compute_gradient_error(inputs_features, [1, 16, 5, 5], pool_result[0], [1, 3, 4, 4], delta=0.0001, x_init_value=np.array(map_to_pool)))
+        # _, jaccobian = tf.test.compute_gradient(inputs_features, [1, 16, 5, 5], pool_result[0], [1, 3, 4, 4], delta=0.0001, x_init_value=np.array(map_to_pool))
+        # y = sess.run(pool_result[0])
+        # print(jaccobian.shape)
+        # print(np.reshape(np.matmul(jaccobian, np.ones_like(y.flatten())), np.array(map_to_pool).shape))
+        print(tf.test.compute_gradient(inputs_features, [1, 16, 5, 5], pool_result[0], [1, 3, 4, 4], delta=0.0001, x_init_value=np.array(map_to_pool)))
+    with tf.device('/gpu:0'):
+      ps_roi_align = op_module.ps_roi_align
+      inputs_features = tf.constant(map_to_pool, dtype=tf.float32)
+      pool_result = ps_roi_align(inputs_features, [[[0.2, 0.2, 0.7, 0.7], [0.5, 0.5, 0.9, 0.9], [0.9, 0.9, 1., 1.]]], 2, 2, pool_method)
+      with tf.Session() as sess:
+        #print(sess.run(tf.gradients(pool_result[0], [inputs_features])))
+        print(tf.test.compute_gradient_error(inputs_features, [1, 16, 5, 5], pool_result[0], [1, 3, 4, 4], delta=0.0001, x_init_value=np.array(map_to_pool)))
+        # _, jaccobian = tf.test.compute_gradient(inputs_features, [1, 16, 5, 5], pool_result[0], [1, 3, 4, 4], delta=0.0001, x_init_value=np.array(map_to_pool))
+        # y = sess.run(pool_result[0])
+        # print(jaccobian.shape)
+        # print(np.reshape(np.matmul(jaccobian, np.ones_like(y.flatten())), np.array(map_to_pool).shape))
+        print(tf.test.compute_gradient(inputs_features, [1, 16, 5, 5], pool_result[0], [1, 3, 4, 4], delta=0.0001, x_init_value=np.array(map_to_pool)))
 
-#     probs = tf.nn.softmax(logits)
-#     # in fact, tf.shape(probs)[0] is also a tensor
-#     # tf.get_shape().as_list() for known shape
-#     indices = tf.stack((tf.range(tf.cast(tf.shape(probs)[0], tf.int64), dtype=tf.int64), tf.argmax(one_hot_labels, axis=1)), axis=1)
-#     #indices = tf.stack((tf.range(probs.get_shape()[0], dtype=tf.int64), tf.argmax(one_hot_labels, axis=1)), axis=1)
-#     prob_foreach = tf.gather_nd( probs, indices )
-#     prob_foreach_subbyone = 1 - prob_foreach
+class RotatedPSROIAlignTest(tf.test.TestCase):
+  def testRotatedPSROIAlign(self):
+    with tf.device('/gpu:1'):
+      # map C++ operators to python objects
+      rotated_ps_roi_align = op_module.rotated_ps_roi_align
+      result = rotated_ps_roi_align(map_to_pool, [[[0.1, 0.1, 0.2, 0.3, 0.5, 0.5, 0.3, 0.2], [0.5, 0.5, 0.6, 0.7, 0.9, 0.9, 0.7, 0.6], [0.6, 0.7, 0.9, 0.9, 0.7, 0.6, 0.2, 0.2]]], [[1, -1, 0]], 2, 2, pool_method)
+      with self.test_session() as sess:
+        print('rotated_ps_roi_align in gpu:', sess.run(result))
+    with tf.device('/cpu:0'):
+      # map C++ operators to python objects
+      rotated_ps_roi_align = op_module.rotated_ps_roi_align
+      result = rotated_ps_roi_align(map_to_pool, [[[0.1, 0.1, 0.2, 0.3, 0.5, 0.5, 0.3, 0.2], [0.5, 0.5, 0.6, 0.7, 0.9, 0.9, 0.7, 0.6], [0.6, 0.7, 0.9, 0.9, 0.7, 0.6, 0.2, 0.2]]], [[1, -1, 0]], 2, 2, pool_method)
+      with self.test_session() as sess:
+        print('rotated_ps_roi_align in cpu:', sess.run(result))
+        # expect [3.18034267  0.39960092  0.00709875  2.96500921]
+        #self.assertAllEqual(result.eval(), [5, 0, 0, 0, 0])
 
-#     grad_true = 0. - tf.add(prob_foreach*ps_roi_pooling*focal_loss_gamma, batch_weight * tf.pow(prob_foreach_subbyone, focal_loss_gamma + 1))
-#     scatter_mask = 1. - tf.scatter_nd(tf.cast(indices, tf.int32), tf.ones_like(prob_foreach), ligits_shape)
-#     grad_false = tf.expand_dims(tf.div(prob_foreach * ps_roi_pooling * focal_loss_gamma, prob_foreach_subbyone) + batch_weight*tf.pow(prob_foreach_subbyone, focal_loss_gamma), axis=1) * probs
-#     scatter_grad_true = tf.scatter_nd(tf.cast(indices, tf.int32), grad_true, ligits_shape)
-#     #grad_false * scatter_mask + scatter_grad_true
-#     return [tf.expand_dims(grad, 1)  * (grad_false * scatter_mask + scatter_grad_true), None, None, None]  # List of one Tensor, use None for no well-defined gradient of some input,
+@ops.RegisterGradient("RotatedPsRoiAlign")
+def _rotated_ps_roi_align_grad(op, grad, _):
+  '''The gradients for `RotatedPsRoiAlign`.
+  '''
+  inputs_features = op.inputs[0]
+  rois = op.inputs[1]
+  orders = op.inputs[2]
+  pooled_features_grad = op.outputs[0]
+  pooled_index = op.outputs[1]
+  grid_dim_width = op.get_attr('grid_dim_width')
+  grid_dim_height = op.get_attr('grid_dim_height')
 
-@ops.RegisterGradient("PSROIPooling")
-def _ps_roi_pooling_grad(op, grad):
-    """The gradients for `focal_loss`.
+  return [op_module.rotated_ps_roi_align_grad(inputs_features, rois, orders, grad, pooled_index, grid_dim_width, grid_dim_height, pool_method), None, None]
 
-    Args:
-    op: The `focal_loss` `Operation` that we are differentiating, which we can use
-      to find the inputs and outputs of the original op.
-    grad: Gradient with respect to the output of the `focal_loss` op.
-
-    Returns:
-    Gradients with respect to the input of `focal_loss`.
-    """
-    ps_roi_pooling_grad = op_module.ps_roi_pooling_grad
-    logits = op.inputs[0]
-    one_hot_labels = op.inputs[1]
-    batch_weight = op.inputs[2]
-    focal_loss_gamma = op.inputs[3]
-    focal_loss = op.outputs[0]
-
-    return [tf.expand_dims(grad, 1) * ps_roi_pooling_grad(logits, tf.cast(tf.argmax(one_hot_labels, 1), tf.float32), batch_weight, focal_loss_gamma, focal_loss), None, None, None]
-
-def ps_roi_pooling_tf(logits, one_hot, weight, gamma):
-  # prob = tf.nn.softmax(logits)
-  # percls_loss = tf.subtract(tf.zeros_like(prob), tf.multiply(tf.pow(tf.subtract(tf.ones_like(prob), prob), gamma), tf.log(prob)))
-  # losses = tf.multiply(tf.reduce_sum(tf.multiply(one_hot, percls_loss), 1), weight)
-  # return losses
-  prob = tf.nn.softmax(logits)
-  return tf.reduce_sum(one_hot * (0. - tf.pow(1 - prob, gamma) * tf.nn.log_softmax(logits)), 1) * weight#tf.reduce_mean(tf.reduce_sum(one_hot * (0. - tf.pow(1 - prob, gamma) * tf.nn.log_softmax(logits)), 1) * weight)
-
-class PSROIPoolingTFTest(tf.test.TestCase):
-  def testPSROIPoolingTF(self):
-    with self.test_session():
-      result = ps_roi_pooling_tf([[1., 2., 3., 0, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0]], [[1., 0, 0, 0, 0],[0, 1., 0, 0, 0],[0, 0, 1., 0, 0],[0, 0, 0, 1., 0]], [1, 1., 1, 1], 5.)
-      print(result.eval())
-
-
-class PSROIPoolingGradTest(tf.test.TestCase):
-  def testPSROIPoolingGrad(self):
-    ps_roi_pooling = op_module.ps_roi_pooling
-
-    logits = tf.constant([[1.0, 2., 3., 30, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0]], dtype=tf.float32)
-    rand_logits = tf.placeholder(tf.float32, shape=(4, 5))
-    one_hot = tf.constant([[1., 0, 0, 0, 0],[0, 1., 0., 0, 0],[0, 0, 1., 0, 0],[0, 0, 0, 1., 0]], dtype=tf.float32)
-    weight = tf.constant([2, 1., 1, 1], dtype=tf.float32)
-    loss = ps_roi_pooling(logits, one_hot, weight, tf.constant(5., dtype=tf.float32))
-    loss_tf = ps_roi_pooling_tf(logits, one_hot, weight, tf.constant(5., dtype=tf.float32))
-
-    with tf.Session() as sess:
-      print(tf.test.compute_gradient_error(logits, [4, 5], loss, [4], delta=0.0001, x_init_value=np.array([[1.0, 2., 3., 30, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0]])))
-      print(tf.test.compute_gradient_error(logits, [4, 5], loss_tf, [4], delta=0.0001, x_init_value=np.array([[1.0, 2., 3., 30, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0]])))
-      print(tf.test.compute_gradient(logits, [4, 5], loss, [4], x_init_value=np.array([[1.0, 2., 3., 30, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0]])))
-      print(tf.test.compute_gradient(logits, [4, 5], loss_tf, [4], x_init_value=np.array([[1.0, 2., 3., 30, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0]])))
-
-
-class PSROIPoolingBackTest(tf.test.TestCase):
-  def testPSROIPoolingBack(self):
-    # map C++ operators to python objects
-    ps_roi_pooling_grad = op_module.ps_roi_pooling_grad
-    with self.test_session():
-      pass
-      # result = ps_roi_pooling_grad([[1., 2., 3., 0, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0],[1., 2., 3., 0, 0]], [1, 2, 3, 4], [2, 1., 2, 1, 1], 5., [3.18034267, 0.39960092, 0.00709875, 2.96500921])
-      #print(result.eval())
+class RotatedPSROIAlignGradTest(tf.test.TestCase):
+  def testRotatedPSROIAlignGrad(self):
+    with tf.device('/cpu:0'):
+      rotated_ps_roi_align = op_module.rotated_ps_roi_align
+      inputs_features = tf.constant(map_to_pool, dtype=tf.float32)
+      pool_result = rotated_ps_roi_align(inputs_features, [[[0.1, 0.1, 0.2, 0.3, 0.5, 0.5, 0.3, 0.2], [0.5, 0.5, 0.6, 0.7, 0.9, 0.9, 0.7, 0.6], [0.6, 0.7, 0.9, 0.9, 0.7, 0.6, 0.2, 0.2]]], [[1, -1, 0]], 2, 2, pool_method)
+      with tf.Session() as sess:
+        #print(sess.run(tf.gradients(pool_result[0], [inputs_features])))
+        print(tf.test.compute_gradient_error(inputs_features, [1, 16, 5, 5], pool_result[0], [1, 3, 4, 4], delta=0.0001, x_init_value=np.array(map_to_pool)))
+        # _, jaccobian = tf.test.compute_gradient(inputs_features, [1, 16, 5, 5], pool_result[0], [1, 3, 4, 4], delta=0.0001, x_init_value=np.array(map_to_pool))
+        # y = sess.run(pool_result[0])
+        # print(jaccobian.shape)
+        # print(np.reshape(np.matmul(jaccobian, np.ones_like(y.flatten())), np.array(map_to_pool).shape))
+        print(tf.test.compute_gradient(inputs_features, [1, 16, 5, 5], pool_result[0], [1, 3, 4, 4], delta=0.0001, x_init_value=np.array(map_to_pool)))
+    with tf.device('/gpu:0'):
+      rotated_ps_roi_align = op_module.rotated_ps_roi_align
+      inputs_features = tf.constant(map_to_pool, dtype=tf.float32)
+      pool_result = rotated_ps_roi_align(inputs_features, [[[0.1, 0.1, 0.2, 0.3, 0.5, 0.5, 0.3, 0.2], [0.5, 0.5, 0.6, 0.7, 0.9, 0.9, 0.7, 0.6], [0.6, 0.7, 0.9, 0.9, 0.7, 0.6, 0.2, 0.2]]], [[1, -1, 0]], 2, 2, pool_method)
+      with tf.Session() as sess:
+        #print(sess.run(tf.gradients(pool_result[0], [inputs_features])))
+        print(tf.test.compute_gradient_error(inputs_features, [1, 16, 5, 5], pool_result[0], [1, 3, 4, 4], delta=0.0001, x_init_value=np.array(map_to_pool)))
+        # _, jaccobian = tf.test.compute_gradient(inputs_features, [1, 16, 5, 5], pool_result[0], [1, 3, 4, 4], delta=0.0001, x_init_value=np.array(map_to_pool))
+        # y = sess.run(pool_result[0])
+        # print(jaccobian.shape)
+        # print(np.reshape(np.matmul(jaccobian, np.ones_like(y.flatten())), np.array(map_to_pool).shape))
+        print(tf.test.compute_gradient(inputs_features, [1, 16, 5, 5], pool_result[0], [1, 3, 4, 4], delta=0.0001, x_init_value=np.array(map_to_pool)))
 
 if __name__ == "__main__":
   tf.test.main()
