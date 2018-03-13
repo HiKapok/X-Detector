@@ -203,6 +203,9 @@ class AnchorEncoder(object):
 
             ymin, xmin, ymax, xmax = _rois[0], _rois[1], _rois[2], _rois[3]
             vol_anchors = (xmax - xmin) * (ymax - ymin)
+            # padding_maks = vol_anchors > 0
+            # _rois, ymin, xmin, ymax, xmax = tf.boolean_mask(_rois, padding_maks), tf.boolean_mask(ymin, padding_maks), tf.boolean_mask(xmin, padding_maks), tf.boolean_mask(ymax, padding_maks), tf.boolean_mask(xmax, padding_maks)
+
             inside_mask = tf.logical_and(tf.logical_and(ymin >= -allowed_border*1., xmin >= -allowed_border*1.),
                                                                     tf.logical_and(ymax < (1. + allowed_border*1.), xmax < (1. + allowed_border*1.)))
             # store every jaccard score while loop all ground truth, will update depends the score of anchor and current ground_truth
@@ -336,7 +339,7 @@ class AnchorEncoder(object):
                 select_indices = tf.random_shuffle(tf.range(now_count))[:need_count]
                 return select_indices
 
-            total_labels = tf.Print(total_labels, [tf.shape(total_labels), tf.shape(total_scores)], message='Notice Here: both the label and scores must be one vector.')
+            #total_labels = tf.Print(total_labels, [tf.shape(total_labels), tf.shape(total_scores)], message='Notice Here: both the label and scores must be one vector.')
 
             positive_mask = total_labels > 0
             positive_indices = tf.squeeze(tf.where(positive_mask), axis = -1)

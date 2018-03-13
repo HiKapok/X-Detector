@@ -136,7 +136,7 @@ def input_pipeline():
 
         anchor_encoder_decoder = anchor_manipulator.AnchorEncoder(all_anchors,
                                         num_classes = FLAGS.num_classes,
-                                        allowed_borders = [0.1],
+                                        allowed_borders = [0.],
                                         ignore_threshold = FLAGS.match_threshold, # only update labels for positive examples
                                         prior_scaling=[0.1, 0.1, 0.2, 0.2])
 

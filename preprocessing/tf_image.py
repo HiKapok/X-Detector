@@ -617,11 +617,11 @@ def ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.1, 0.3, 0.5, 0.
         cliped_xmax = tf.minimum(tf.cast(roi_slice_range[3], tf.float32), mask_bboxes[:, 3])
 
         mask_bboxes = tf.stack([cliped_ymin, cliped_xmin, cliped_ymax, cliped_xmax], axis=-1)
-
+        #print(mask_bboxes)
         # Rescale to target dimension.
         scale = tf.cast(tf.stack([roi_slice_range[2], roi_slice_range[3],
                                   roi_slice_range[2], roi_slice_range[3]]), mask_bboxes.dtype)
-
+        #print(scale)
         return control_flow_ops.cond(tf.logical_or(math_ops.less(roi_slice_range[2], 1), math_ops.less(roi_slice_range[3], 1)), lambda: (image, labels, bboxes), lambda: (tf.slice(image, [roi_slice_range[0], roi_slice_range[1], 0], [roi_slice_range[2], roi_slice_range[3], -1]), mask_labels, mask_bboxes / scale))
 
     with tf.name_scope('ssd_random_sample_patch'):
@@ -629,9 +629,10 @@ def ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.1, 0.3, 0.5, 0.
         _Check3DImage(image, require_static=False)
 
         min_iou_list = tf.convert_to_tensor(ratio_list)
-        samples_min_iou = tf.multinomial(tf.log([[1./len(ratio_list), 1./len(ratio_list), 1./len(ratio_list), 1./len(ratio_list), 1./len(ratio_list), 1./len(ratio_list)]]), 1)
+        samples_min_iou = tf.multinomial(tf.log([[1./len(ratio_list)] * len(ratio_list)]), 1)
 
         sampled_min_iou = min_iou_list[tf.cast(samples_min_iou[0][0], tf.int32)]
+        #print(sampled_min_iou)
 
         return control_flow_ops.cond(math_ops.less(sampled_min_iou, 1.), lambda: sample_patch(image, labels, bboxes, sampled_min_iou), lambda: (image, labels, bboxes))
 

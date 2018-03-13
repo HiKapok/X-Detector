@@ -110,11 +110,14 @@ def _bboxes_nms(scores, bboxes, nms_threshold = 0.5, keep_top_k = 200, mode = 'u
             index = 0
             [index, nms_mask, keep_mask] = tf.while_loop(condition, body, [index, nms_mask, keep_mask])
 
-            return [tf.boolean_mask(scores, keep_mask), tf.boolean_mask(bboxes, keep_mask)]
+            return [_pad_axis(tf.boolean_mask(scores, keep_mask), 0, keep_top_k), _pad_axis(tf.boolean_mask(bboxes, keep_mask), 0, keep_top_k)]
 
         return tf.cond(tf.less(num_bboxes, 1), lambda: [scores, bboxes], lambda: nms_proc(scores, bboxes))
 
 def _filter_boxes(scores, bboxes, min_size, scope=None):#, keep_top_k = 100
+    #scores = tf.Print(scores,[tf.shape(scores)])
+    # scores = tf.Print(scores,[tf.shape(scores), min_size])
+    # bboxes = tf.Print(bboxes,[tf.shape(bboxes), bboxes])
     with tf.name_scope(scope, 'rpn_filter_boxes', [scores, bboxes]):
         ymin = bboxes[:, 0]
         #ymin = tf.Print(ymin, [tf.shape(ymin)])
@@ -138,6 +141,7 @@ def _filter_boxes(scores, bboxes, min_size, scope=None):#, keep_top_k = 100
         return [tf.boolean_mask(scores, keep_mask), tf.boolean_mask(bboxes, keep_mask)]
 
 def _bboxes_sort(scores, bboxes, top_k=100, scope=None):
+    #scores = tf.Print(scores,[tf.shape(scores)])
     with tf.name_scope(scope, 'rpn_bboxes_sort', [scores, bboxes]):
         # Sort scores...
         scores, idxes = tf.nn.top_k(scores, k=top_k, sorted=True)
@@ -146,6 +150,7 @@ def _bboxes_sort(scores, bboxes, top_k=100, scope=None):
 
 
 def _bboxes_clip(bbox_ref, bboxes, scope=None):
+    #bboxes = tf.Print(bboxes,[tf.shape(bboxes)])
     with tf.name_scope(scope, 'rpn_bboxes_clip'):
         # Easier with transposed bboxes. Especially for broadcasting.
         bbox_ref = tf.transpose(bbox_ref)
@@ -169,6 +174,8 @@ def _bboxes_clip(bbox_ref, bboxes, scope=None):
 
 def _upsample_rois(scores, bboxes, keep_top_k):
     # upsample with replacement
+    bboxes = tf.boolean_mask(bboxes, scores > 0.)
+    scores = tf.boolean_mask(scores, scores > 0.)
     def upsampel_impl():
         num_bboxes = tf.shape(scores)[0]
         left_count = keep_top_k - num_bboxes
@@ -250,6 +257,8 @@ def XceptionBody(input_image, num_classes, is_training = False, data_format='cha
                                     name='block2_pool')
     # 119
     inputs = inputs + residual
+
+    #inputs = tf.Print(inputs,[tf.shape(inputs), inputs,residual])
 
     # (119-1+0*2)/2 + 1 = 60
     residual = tf.layers.conv2d(inputs, 256, (1, 1), use_bias=False, name='conv2d_2', strides=(2, 2),
@@ -356,6 +365,8 @@ def get_rpn(net_input, num_anchors, is_training, data_format, var_scope):
                                       kernel_initializer=initializer_to_use(),
                                       bias_initializer=tf.zeros_initializer(),
                                       data_format=data_format)
+
+        #rpn_bbox_pred = tf.Print(rpn_bbox_pred,[tf.shape(rpn_bbox_pred), net_input, rpn_bbox_pred])
         return rpn_cls_score, rpn_bbox_pred
 
 def get_proposals(object_score, bboxes_pred, encode_fn, rpn_pre_nms_top_n, rpn_post_nms_top_n, nms_threshold, rpn_min_size, data_format):
@@ -384,7 +395,7 @@ def get_proposals(object_score, bboxes_pred, encode_fn, rpn_pre_nms_top_n, rpn_p
     bboxes_pred = tf.map_fn(lambda _bboxes : _bboxes_clip([0., 0., 1., 1.], _bboxes), bboxes_pred)
     object_score, bboxes_pred = tf.map_fn(lambda _score_bboxes : _filter_boxes(_score_bboxes[0], _score_bboxes[1], rpn_min_size), [object_score, bboxes_pred])
     object_score, bboxes_pred = tf.map_fn(lambda _score_bboxes : _bboxes_sort(_score_bboxes[0], _score_bboxes[1], top_k=tf.minimum(tf.shape(_score_bboxes[0])[0], rpn_pre_nms_top_n)), [object_score, bboxes_pred])
-    object_score, bboxes_pred = tf.map_fn(lambda _score_bboxes : _bboxes_nms(_score_bboxes[0], _score_bboxes[1], nms_threshold = nms_threshold, keep_top_k=tf.minimum(tf.shape(_score_bboxes[0])[0], rpn_post_nms_top_n), mode = 'union'), [object_score, bboxes_pred])
+    object_score, bboxes_pred = tf.map_fn(lambda _score_bboxes : _bboxes_nms(_score_bboxes[0], _score_bboxes[1], nms_threshold = nms_threshold, keep_top_k=tf.minimum(tf.shape(_score_bboxes[0])[0], rpn_post_nms_top_n), mode = 'union'), [object_score, bboxes_pred], dtype=[tf.float32, tf.float32], infer_shape=True)
     # padding to fix the size of rois
     # the object_score is not in descending order when the upsample padding happened
     object_score, bboxes_pred = tf.map_fn(lambda _score_bboxes : _upsample_rois(_score_bboxes[0], _score_bboxes[1], keep_top_k= rpn_post_nms_top_n), [object_score, bboxes_pred])
@@ -473,6 +484,8 @@ def get_head(net_input, pooling_op, grid_width, grid_height, loss_func, proposal
             ohem_select_num = tf.minimum(ohem_roi_one_image, tf.shape(ohem_loss)[1])
 
             _, select_indices = tf.nn.top_k(ohem_loss, k=ohem_select_num)
+
+            select_indices = tf.stop_gradient(select_indices)
 
             psroipooled_rois = tf.gather(psroipooled_rois, select_indices, axis=1)
 

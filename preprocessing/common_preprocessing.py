@@ -359,7 +359,8 @@ def light_head_preprocess_for_train(image, labels, bboxes,
         tf_summary_image(image, bboxes, 'image_on_canvas_1')
 
         # Distort image and bounding boxes.
-        random_sample_image, labels, bboxes = tf_image.ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.5, 0.7, 0.9, 1.])
+        #print(image, labels, bboxes)
+        random_sample_image, labels, bboxes = tf_image.ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.4, 0.6, 0.8, 1.])
         tf_summary_image(random_sample_image, bboxes, 'image_shape_distorted_2')
 
         # Randomly flip the image horizontally.
@@ -379,34 +380,77 @@ def light_head_preprocess_for_train(image, labels, bboxes,
         tf_summary_image(dst_image, bboxes, 'image_color_distorted_4')
 
         # Rescale to VGG input scale.
-        image = dst_image * 255.
+        image = dst_image * 2.
         image.set_shape([None, None, 3])
-        image = tf_image_whitened(image, [_R_MEAN, _G_MEAN, _B_MEAN])
+        image = tf_image_whitened(image, [_R_MEAN/127.5, _G_MEAN/127.5, _B_MEAN/127.5])
         # Image data format.
         if data_format == 'NCHW':
             image = tf.transpose(image, perm=(2, 0, 1))
         return image, labels, bboxes
 
+def light_head_preprocess_for_eval(image, labels, bboxes,
+                            out_shape=EVAL_SIZE, data_format='NHWC',
+                            difficults=None, resize=Resize.WARP_RESIZE,
+                            scope='light_head_preprocessing_eval'):
+    with tf.name_scope(scope):
+        if image.get_shape().ndims != 3:
+            raise ValueError('Input must be of size [height, width, C>0]')
+
+        image = tf.image.convert_image_dtype(image, dtype=tf.float32) * 2.
+        image = tf_image_whitened(image, [_R_MEAN/127.5, _G_MEAN/127.5, _B_MEAN/127.5])
+
+        # Add image rectangle to bboxes.
+        bbox_img = tf.constant([[0., 0., 1., 1.]])
+        if bboxes is None:
+            bboxes = bbox_img
+        else:
+            bboxes = tf.concat([bbox_img, bboxes], axis=0)
+
+        if resize == Resize.NONE:
+            # No resizing...
+            pass
+        elif resize == Resize.CENTRAL_CROP:
+            # Central cropping of the image.
+            image, bboxes = tf_image.resize_image_bboxes_with_crop_or_pad(
+                image, bboxes, out_shape[0], out_shape[1])
+        elif resize == Resize.PAD_AND_RESIZE:
+            # Resize image first: find the correct factor...
+            shape = tf.shape(image)
+            factor = tf.minimum(tf.to_double(1.0),
+                                tf.minimum(tf.to_double(out_shape[0] / shape[0]),
+                                           tf.to_double(out_shape[1] / shape[1])))
+            resize_shape = factor * tf.to_double(shape[0:2])
+            resize_shape = tf.cast(tf.floor(resize_shape), tf.int32)
+
+            image = tf_image.resize_image(image, resize_shape,
+                                          method=tf.image.ResizeMethod.BILINEAR,
+                                          align_corners=False)
+            # Pad to expected size.
+            image, bboxes = tf_image.resize_image_bboxes_with_crop_or_pad(
+                image, bboxes, out_shape[0], out_shape[1])
+        elif resize == Resize.WARP_RESIZE:
+            # Warp resize of the image.
+            image = tf_image.resize_image(image, out_shape,
+                                          method=tf.image.ResizeMethod.BILINEAR,
+                                          align_corners=False)
+
+        # Split back bounding boxes.
+        bbox_img = bboxes[0]
+        bboxes = bboxes[1:]
+        # Remove difficult boxes.
+        if difficults is not None:
+            mask = tf.logical_not(tf.cast(difficults, tf.bool))
+            labels = tf.boolean_mask(labels, mask)
+            bboxes = tf.boolean_mask(bboxes, mask)
+        # Image data format.
+        if data_format == 'NCHW':
+            image = tf.transpose(image, perm=(2, 0, 1))
+        return image, labels, bboxes, bbox_img
+
+
 def preprocess_for_train(image, labels, bboxes,
                          out_shape, data_format='NHWC',
                          scope='common_preprocessing_train'):
-    """Preprocesses the given image for training.
-
-    Note that the actual resizing scale is sampled from
-        [`resize_size_min`, `resize_size_max`].
-
-    Args:
-        image: A `Tensor` representing an image of arbitrary size.
-        output_height: The height of the image after preprocessing.
-        output_width: The width of the image after preprocessing.
-        resize_side_min: The lower bound for the smallest side of the image for
-            aspect-preserving resizing.
-        resize_side_max: The upper bound for the smallest side of the image for
-            aspect-preserving resizing.
-
-    Returns:
-        A preprocessed image.
-    """
     fast_mode = False
     with tf.name_scope(scope, 'common_preprocessing_train', [image, labels, bboxes]):
         if image.get_shape().ndims != 3:
@@ -454,16 +498,6 @@ def preprocess_for_eval(image, labels, bboxes,
                         out_shape=EVAL_SIZE, data_format='NHWC',
                         difficults=None, resize=Resize.WARP_RESIZE,
                         scope='common_preprocessing_train'):
-    """Preprocess an image for evaluation.
-
-    Args:
-        image: A `Tensor` representing an image of arbitrary size.
-        out_shape: Output shape after pre-processing (if resize != None)
-        resize: Resize strategy.
-
-    Returns:
-        A preprocessed image.
-    """
     with tf.name_scope(scope):
         if image.get_shape().ndims != 3:
             raise ValueError('Input must be of size [height, width, C>0]')
@@ -637,8 +671,8 @@ def light_head_preprocess_image(image,
                                             out_shape=out_shape,
                                             data_format=data_format)
     else:
-        return preprocess_for_eval(image, labels, bboxes,
-                                   out_shape=out_shape,
-                                   data_format=data_format,
-                                   **kwargs)
+        return light_head_preprocess_for_eval(image, labels, bboxes,
+                                           out_shape=out_shape,
+                                           data_format=data_format,
+                                           **kwargs)
 

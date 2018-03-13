@@ -19,9 +19,12 @@ from __future__ import print_function
 import os
 import sys
 
+
 #from scipy.misc import imread, imsave, imshow, imresize
 import tensorflow as tf
 from tensorflow.python.framework import ops
+
+from tensorflow.python import debug as tf_debug
 
 from net import xception_body
 from utility import train_helper
@@ -109,7 +112,7 @@ tf.app.flags.DEFINE_integer(
 tf.app.flags.DEFINE_integer(
     'rpn_post_nms_top_n', 1200, 'keep numbers of proposals after nms.')
 tf.app.flags.DEFINE_float(
-    'rpn_min_size', 16, 'minsize threshold of proposals to be filtered for rpn.')
+    'rpn_min_size', 16*1./480, 'minsize threshold of proposals to be filtered for rpn.')
 tf.app.flags.DEFINE_float(
     'rpn_nms_thres', 0.7, 'nms threshold for rpn.')
 tf.app.flags.DEFINE_float(
@@ -193,6 +196,7 @@ def _ps_roi_align_grad(op, grad, _):
   grid_dim_width = op.get_attr('grid_dim_width')
   grid_dim_height = op.get_attr('grid_dim_height')
 
+  #return [tf.ones_like(inputs_features), None]
   return [op_module.ps_roi_align_grad(inputs_features, rois, grad, pooled_index, grid_dim_width, grid_dim_height, pool_method), None]
 
 def input_pipeline():
@@ -211,7 +215,7 @@ def input_pipeline():
 
         anchor_encoder_decoder = anchor_manipulator.AnchorEncoder(all_anchors,
                                         num_classes = FLAGS.num_classes,
-                                        allowed_borders = [0.1],
+                                        allowed_borders = [0.],
                                         ignore_threshold = FLAGS.rpn_match_threshold, # only update labels for positive examples
                                         prior_scaling=[0.1, 0.1, 0.2, 0.2])
         list_from_batch, _ = dataset_factory.get_dataset(FLAGS.dataset_name,
@@ -263,9 +267,10 @@ def xdet_model_fn(features, labels, mode, params):
     gtargets = labels['targets'][num_feature_layers : 2 * num_feature_layers][0]
     gscores = labels['targets'][2 * num_feature_layers : 3 * num_feature_layers][0]
 
+    #features = tf.ones([4,480,480,3]) * 0.5
     with tf.variable_scope(params['model_scope'], default_name = None, values = [features], reuse=tf.AUTO_REUSE):
         rpn_feat_map, backbone_feat = xception_body.XceptionBody(features, params['num_classes'], is_training=(mode == tf.estimator.ModeKeys.TRAIN), data_format=params['data_format'])
-
+        #rpn_feat_map = tf.Print(rpn_feat_map,[tf.shape(rpn_feat_map), rpn_feat_map,backbone_feat])
         rpn_cls_score, rpn_bbox_pred = xception_body.get_rpn(rpn_feat_map, num_anchors_list[0], (mode == tf.estimator.ModeKeys.TRAIN), params['data_format'], 'rpn_head')
 
         large_sep_feature = xception_body.large_sep_kernel(backbone_feat, 256, 10 * 7 * 7, (mode == tf.estimator.ModeKeys.TRAIN), params['data_format'], 'large_sep_feature')
@@ -280,7 +285,11 @@ def xdet_model_fn(features, labels, mode, params):
         rpn_object_score = tf.reshape(rpn_object_score, [params['batch_size'], -1])
         rpn_location_pred = tf.reshape(rpn_bbox_pred, [params['batch_size'], -1, 4])
 
+        #rpn_location_pred = tf.Print(rpn_location_pred,[tf.shape(rpn_location_pred), rpn_location_pred])
+
         rpn_bboxes_pred = labels['rpn_decode_fn'](rpn_location_pred)
+
+        #rpn_bboxes_pred = tf.Print(rpn_bboxes_pred,[tf.shape(rpn_bboxes_pred), rpn_bboxes_pred])
         # rpn loss here
         cls_pred = tf.reshape(rpn_cls_score, [-1, 2])
         location_pred = tf.reshape(rpn_bbox_pred, [-1, 4])
@@ -479,7 +488,11 @@ def main(_):
 
     logging_hook = tf.train.LoggingTensorHook(tensors=tensors_to_log, every_n_iter=FLAGS.log_every_n_steps)
 
+    debug_hook = tf_debug.LocalCLIDebugHook(thread_name_filter="MainThread$")
+    debug_hook.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
+
     print('Starting a training cycle.')
+    #xdetector.train(input_fn=input_pipeline(), hooks=[debug_hook])
     xdetector.train(input_fn=input_pipeline(), hooks=[logging_hook])
 
 if __name__ == '__main__':
