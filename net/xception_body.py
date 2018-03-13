@@ -1,3 +1,17 @@
+# Copyright 2018 Changan Wang
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# =============================================================================
 import tensorflow as tf
 
 from . import resnet_v2
@@ -375,6 +389,7 @@ def get_proposals(object_score, bboxes_pred, encode_fn, rpn_pre_nms_top_n, rpn_p
     # the object_score is not in descending order when the upsample padding happened
     object_score, bboxes_pred = tf.map_fn(lambda _score_bboxes : _upsample_rois(_score_bboxes[0], _score_bboxes[1], keep_top_k= rpn_post_nms_top_n), [object_score, bboxes_pred])
     # match and sample to get proposals and targets
+    #print(encode_fn(bboxes_pred))
     proposals_bboxes, proposals_targets, proposals_labels, proposals_scores = encode_fn(bboxes_pred)
 
     return proposals_bboxes, proposals_targets, proposals_labels, proposals_scores
@@ -406,7 +421,7 @@ def large_sep_kernel(net_input, depth_mid, depth_output, is_training, data_forma
 
     return resnet_v2.batch_norm_relu(branch_0b + branch_1b, is_training, data_format)
 
-def get_head(net_input, pooling_op, grid_width, grid_height, loss_func, proposals_bboxes, proposals_targets, proposals_labels, proposals_scores, num_classes, is_training, using_ohem, batch_rois_ohem, data_format, var_scope):
+def get_head(net_input, pooling_op, grid_width, grid_height, loss_func, proposals_bboxes, proposals_targets, proposals_labels, proposals_scores, num_classes, is_training, using_ohem, ohem_roi_one_image, data_format, var_scope):
     with tf.variable_scope(var_scope):
         # two pooling op here in original r-fcn
         # rfcn_cls = tf.layers.conv2d(inputs=net_input, filters=10 * grid_width * grid_height, kernel_size=(1, 1), strides=1,
@@ -422,12 +437,13 @@ def get_head(net_input, pooling_op, grid_width, grid_height, loss_func, proposal
         # {num_per_batch, num_rois, grid_size, bank_size}
 
         yxhw_bboxes = _point2center(proposals_bboxes)
-        if params['data_format'] == 'channels_last':
+        if data_format == 'channels_last':
             net_input = tf.transpose(net_input, [0, 3, 1, 2])
 
         psroipooled_rois, _ = pooling_op(net_input, yxhw_bboxes, grid_width, grid_height, 'max')
 
-        psroipooled_rois = tf.reshape(psroipooled_rois, [-1, proposals_labels.get_shape().as_list()[-1], 10 * grid_width * grid_height])
+        psroipooled_rois = tf.map_fn(lambda pooled_feat: tf.reshape(pooled_feat, [-1, 10 * grid_width * grid_height]), psroipooled_rois)
+        #psroipooled_rois = tf.reshape(psroipooled_rois, [-1, proposals_labels.get_shape().as_list()[-1], 10 * grid_width * grid_height])
 
         select_indices = None
 
@@ -454,9 +470,9 @@ def get_head(net_input, pooling_op, grid_width, grid_height, loss_func, proposal
             # the output should be (batch, num_rois)
             ohem_loss = loss_func(tf.stop_gradient(cls_score), tf.stop_gradient(bboxes_reg), None)
 
-            ohem_select_num = tf.minimum(batch_rois_ohem, tf.shape(ohem_loss)[1])
+            ohem_select_num = tf.minimum(ohem_roi_one_image, tf.shape(ohem_loss)[1])
 
-            _, select_indices = tf.nn.top_k(ohem_loss, k=select_count)
+            _, select_indices = tf.nn.top_k(ohem_loss, k=ohem_select_num)
 
             psroipooled_rois = tf.gather(psroipooled_rois, select_indices, axis=1)
 

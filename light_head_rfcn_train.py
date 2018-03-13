@@ -1,3 +1,17 @@
+# Copyright 2018 Changan Wang
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# =============================================================================
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -166,6 +180,7 @@ def load_op_module(lib_name):
 
 op_module = load_op_module(LIB_NAME)
 ps_roi_align = op_module.ps_roi_align
+pool_method = 'max'
 
 @ops.RegisterGradient("PsRoiAlign")
 def _ps_roi_align_grad(op, grad, _):
@@ -210,11 +225,11 @@ def input_pipeline():
                                                 num_preprocessing_threads = FLAGS.num_preprocessing_threads,
                                                 num_epochs = FLAGS.train_epochs,
                                                 anchor_encoder = anchor_encoder_decoder.encode_all_anchors)
-
+        #print(list_from_batch[-4], list_from_batch[-3])
         return list_from_batch[-1], {'targets': list_from_batch[:-1],
                                     'rpn_decode_fn': lambda pred : anchor_encoder_decoder.decode_all_anchors([pred], squeeze_inner=True)[0],
                                     'head_decode_fn': lambda pred : anchor_encoder_decoder.ext_decode_rois,
-                                    'rpn_encode_fn': lambda rois : anchor_encoder_decoder.ext_encode_rois(rois, list_from_batch[-4], list_from_batch[-3], FLAGS.roi_one_image, FLAGS.fg_ratio, 0.1, head_prior_scaling=[1., 1., 1., 1.])[0],
+                                    'rpn_encode_fn': lambda rois : anchor_encoder_decoder.ext_encode_rois(rois, list_from_batch[-4], list_from_batch[-3], FLAGS.roi_one_image, FLAGS.fg_ratio, 0.1, head_prior_scaling=[1., 1., 1., 1.]),
                                     'num_anchors_list': num_anchors_list}
     return input_fn
 
@@ -259,7 +274,8 @@ def xdet_model_fn(features, labels, mode, params):
             rpn_cls_score = tf.transpose(rpn_cls_score, [0, 2, 3, 1])
             rpn_bbox_pred = tf.transpose(rpn_bbox_pred, [0, 2, 3, 1])
 
-        rpn_object_score = rpn_cls_score[:, :, :, -1]
+        rpn_cls_score = tf.reshape(rpn_cls_score, [-1, 2])
+        rpn_object_score = tf.nn.softmax(rpn_cls_score)[:, -1]
 
         rpn_object_score = tf.reshape(rpn_object_score, [params['batch_size'], -1])
         rpn_location_pred = tf.reshape(rpn_bbox_pred, [params['batch_size'], -1, 4])
@@ -318,35 +334,44 @@ def xdet_model_fn(features, labels, mode, params):
         tf.identity(rpn_cross_entropy, name='rpn_cross_entropy_loss')
         tf.summary.scalar('rpn_cross_entropy_loss', rpn_cross_entropy)
 
-        rpn_loc_loss = modified_smooth_l1(location_pred, gtargets, sigma=1.)
-        #loc_loss = modified_smooth_l1(location_pred, tf.stop_gradient(gtargets))
-        rpn_loc_loss = tf.reduce_mean(tf.reduce_sum(rpn_loc_loss, axis=-1))
+        rpn_l1_distance = modified_smooth_l1(location_pred, gtargets, sigma=1.)
+        rpn_loc_loss = tf.reduce_mean(tf.reduce_sum(rpn_l1_distance, axis=-1))
         rpn_loc_loss = tf.identity(rpn_loc_loss, name='rpn_location_loss')
         tf.summary.scalar('rpn_location_loss', rpn_loc_loss)
         tf.losses.add_loss(rpn_loc_loss)
+        #print(rpn_loc_loss)
 
         proposals_bboxes, proposals_targets, proposals_labels, proposals_scores = xception_body.get_proposals(rpn_object_score, rpn_bboxes_pred, labels['rpn_encode_fn'], params['rpn_pre_nms_top_n'], params['rpn_post_nms_top_n'], params['nms_threshold'], params['rpn_min_size'], params['data_format'])
 
         def head_loss_func(cls_score, bboxes_reg, select_indices, proposals_targets, proposals_labels):
-            if select_indices:
+            if select_indices is not None:
                 proposals_targets = tf.gather(proposals_targets, select_indices, axis=1)
                 proposals_labels = tf.gather(proposals_labels, select_indices, axis=1)
             # Calculate loss, which includes softmax cross entropy and L2 regularization.
-            head_cross_entropy = tf.losses.sparse_softmax_cross_entropy(labels=proposals_labels, logits=cls_score)
-
-            # Create a tensor named cross_entropy for logging purposes.
-            tf.identity(rpn_cross_entropy, name='head_cross_entropy_loss')
-            tf.summary.scalar('head_cross_entropy_loss', head_cross_entropy)
-
+            head_cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=proposals_labels, logits=cls_score)
             head_loc_loss = modified_smooth_l1(bboxes_reg, proposals_targets, sigma=1.)
-            head_loc_loss = tf.reduce_mean(tf.reduce_sum(head_loc_loss, axis=-1))
-            head_loc_loss = tf.identity(head_loc_loss, name='head_location_loss')
-            tf.summary.scalar('head_location_loss', head_loc_loss)
-            tf.losses.add_loss(head_loc_loss)
+            head_loc_loss = tf.reduce_sum(head_loc_loss, axis=-1)
+            if (params['using_ohem'] and (select_indices is not None)) or (not params['using_ohem']):
+                head_cross_entropy_loss = tf.reduce_mean(head_cross_entropy)
+                head_cross_entropy_loss = tf.identity(head_cross_entropy_loss, name='head_cross_entropy_loss')
+                tf.summary.scalar('head_cross_entropy_loss', head_cross_entropy_loss)
+
+                head_location_loss = tf.reduce_mean(head_loc_loss)
+                head_location_loss = tf.identity(head_location_loss, name='head_location_loss')
+                tf.summary.scalar('head_location_loss', head_location_loss)
+
+                # print(head_cross_entropy_loss)
+                # print(head_location_loss)
 
             return head_cross_entropy + head_loc_loss
 
         head_loss = xception_body.get_head(large_sep_feature, ps_roi_align, 7, 7, lambda cls, bbox, indices : head_loss_func(cls, bbox, indices, proposals_targets, proposals_labels), proposals_bboxes, proposals_targets, proposals_labels, proposals_scores, params['num_classes'], (mode == tf.estimator.ModeKeys.TRAIN), params['using_ohem'], params['ohem_roi_one_image'], params['data_format'], 'final_head')
+
+        # Create a tensor named cross_entropy for logging purposes.
+        tf.identity(head_loss, name='head_loss')
+        tf.summary.scalar('head_loss', head_loss)
+
+        tf.losses.add_loss(head_loss)
 
     if mode == tf.estimator.ModeKeys.PREDICT:
         return tf.estimator.EstimatorSpec(mode=mode, predictions=None)
@@ -444,10 +469,11 @@ def main(_):
 
     tensors_to_log = {
         'learning_rate': 'learning_rate',
-        'rpn_cross_entropy_loss': 'rpn_cross_entropy_loss',
-        'rpn_location_loss': 'rpn_location_loss',
-        'head_cross_entropy_loss': 'head_cross_entropy_loss',
-        'head_location_loss': 'head_location_loss',
+        'rpn_cross_entropy_loss': 'xception_lighthead/rpn_cross_entropy_loss',
+        'rpn_location_loss': 'xception_lighthead/rpn_location_loss',
+        'head_loss': 'xception_lighthead/head_loss',
+        'head_cross_entropy_loss': 'xception_lighthead/final_head/head_cross_entropy_loss',
+        'head_location_loss': 'xception_lighthead/final_head/head_location_loss',
         'total_loss': 'total_loss',
     }
 

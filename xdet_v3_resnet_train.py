@@ -1,3 +1,17 @@
+# Copyright 2018 Changan Wang
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# =============================================================================
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -72,9 +86,9 @@ tf.app.flags.DEFINE_string(
 tf.app.flags.DEFINE_float(
     'negative_ratio', 3., 'Negative ratio in the loss function.')
 tf.app.flags.DEFINE_float(
-    'match_threshold', 0.5, 'Matching threshold in the loss function.')
+    'match_threshold', 0.7, 'Matching threshold in the loss function.')
 tf.app.flags.DEFINE_float(
-    'neg_threshold', 0.5, 'Matching threshold for the negtive examples in the loss function.')
+    'neg_threshold', 0.4, 'Matching threshold for the negtive examples in the loss function.')
 # optimizer related configuration
 tf.app.flags.DEFINE_float(
     'weight_decay', 0.0005, 'The weight decay on the model weights.')

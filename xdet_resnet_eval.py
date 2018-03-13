@@ -1,3 +1,17 @@
+# Copyright 2018 Changan Wang
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# =============================================================================
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -71,9 +85,9 @@ tf.app.flags.DEFINE_float(
 tf.app.flags.DEFINE_float(
     'negative_ratio', 3., 'Negative ratio in the loss function.')
 tf.app.flags.DEFINE_float(
-    'match_threshold', 0.5, 'Matching threshold in the loss function.')
+    'match_threshold', 0.7, 'Matching threshold in the loss function.')
 tf.app.flags.DEFINE_float(
-    'neg_threshold', 0.5, 'Matching threshold for the negtive examples in the loss function.')
+    'neg_threshold', 0.4, 'Matching threshold for the negtive examples in the loss function.')
 tf.app.flags.DEFINE_float(
     'select_threshold', 0.01, 'Class-specific confidence score threshold for selecting a box.')
 tf.app.flags.DEFINE_float(
@@ -189,7 +203,7 @@ def bboxes_eval(org_image, image_shape, bbox_img, cls_pred_logits, bboxes_pred, 
     cls_pred_prob = tf.nn.softmax(tf.reshape(cls_pred_logits, [-1, num_classes]))
     bboxes_pred = tf.reshape(bboxes_pred, [-1, 4])
     glabels_raw = tf.reshape(glabels_raw, [-1])
-    gbboxes_raw = tf.reshape(gbboxes_raw, [-1])
+    gbboxes_raw = tf.reshape(gbboxes_raw, [-1, 4])
     gbboxes_raw = tf.boolean_mask(gbboxes_raw, glabels_raw > 0)
     glabels_raw = tf.boolean_mask(glabels_raw, glabels_raw > 0)
     isdifficult = tf.reshape(isdifficult, [-1])
@@ -206,6 +220,7 @@ def bboxes_eval(org_image, image_shape, bbox_img, cls_pred_logits, bboxes_pred, 
         selected_scores, selected_bboxes = eval_helper.bboxes_sort(selected_scores, selected_bboxes, top_k=FLAGS.nms_topk * 2)
 
         # Apply NMS algorithm.
+        #print(selected_bboxes)
         selected_scores, selected_bboxes = eval_helper.bboxes_nms_batch(selected_scores, selected_bboxes,
                                  nms_threshold=FLAGS.nms_threshold,
                                  keep_top_k=FLAGS.nms_topk)

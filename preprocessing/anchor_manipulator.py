@@ -1,3 +1,17 @@
+# Copyright 2018 Changan Wang
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# =============================================================================
 import math
 
 import tensorflow as tf
@@ -174,18 +188,19 @@ class AnchorEncoder(object):
             ground_scores.append(ground_score)
         return ground_labels, anchor_regress_targets, ground_scores, len(self._anchors)
 
-    def ext_encode_rois(all_rois, all_labels, all_bboxes, rois_per_image, fg_fraction, allowed_border, head_prior_scaling=[1., 1., 1., 1.]):
+    def ext_encode_rois(self, all_rois, all_labels, all_bboxes, rois_per_image, fg_fraction, allowed_border, head_prior_scaling=[1., 1., 1., 1.]):
         '''Do encoder for rois from SS or RPN
         fg_fraction: the fraction of fg in total bboxes
         '''
-        all_bboxes = tf.boolean_mask(all_bboxes, all_labels > 0)
-        all_labels = tf.boolean_mask(all_labels, all_labels > 0)
-
         expected_num_fg_rois = tf.cast(tf.round(tf.cast(rois_per_image, tf.float32) * fg_fraction), tf.int32)
         #expected_num_bg_rois = rois_per_image - expected_num_fg_rois
         def encode_impl(_rois, _labels, _bboxes):
             '''encode along batch
             '''
+            _bboxes = tf.boolean_mask(_bboxes, _labels > 0)
+            _labels = tf.boolean_mask(_labels, _labels > 0)
+            #print(_labels)
+
             ymin, xmin, ymax, xmax = _rois[0], _rois[1], _rois[2], _rois[3]
             vol_anchors = (xmax - xmin) * (ymax - ymin)
             inside_mask = tf.logical_and(tf.logical_and(ymin >= -allowed_border*1., xmin >= -allowed_border*1.),
@@ -226,7 +241,7 @@ class AnchorEncoder(object):
 
             def condition(i, gt_labels, gt_scores,
                           gt_ymin, gt_xmin, gt_ymax, gt_xmax, max_mask):
-                return tf.less(i, tf.shape(_labels))[0]
+                return tf.less(i, tf.shape(_labels)[0])
 
             def body(i, gt_labels, gt_scores,
                      gt_ymin, gt_xmin, gt_ymax, gt_xmax, max_mask):
@@ -344,9 +359,12 @@ class AnchorEncoder(object):
             # now n_keeps must be equal or less than rois_per_image
             final_keep_indices = tf.cond(n_keeps < rois_per_image, lambda : tf.gather(keep_indices, upsampel_impl(n_keeps, rois_per_image)), lambda : keep_indices)
 
+            #print(tf.gather(total_rois, final_keep_indices), tf.gather(total_targets, final_keep_indices), tf.gather(total_labels, final_keep_indices), tf.gather(total_scores, final_keep_indices))
             return tf.gather(total_rois, final_keep_indices), tf.gather(total_targets, final_keep_indices), tf.gather(total_labels, final_keep_indices), tf.gather(total_scores, final_keep_indices)
+            # return tf.gather(total_rois, final_keep_indices), tf.gather(total_targets, final_keep_indices), tf.gather(total_labels, final_keep_indices), tf.gather(total_scores, final_keep_indices)
 
-        return tf.map_fn(lambda  _rois_labels_bboxes: encode_impl(_rois_labels_bboxes[0], _rois_labels_bboxes[1], _rois_labels_bboxes[2]), [all_rois, all_labels, all_bboxes])
+        #print(tf.map_fn(lambda  _rois_labels_bboxes: encode_impl(_rois_labels_bboxes[0], _rois_labels_bboxes[1], _rois_labels_bboxes[2]), (all_rois, all_labels, all_bboxes), dtype=(tf.float32, tf.float32, tf.int64, tf.float32)))
+        return tf.map_fn(lambda  _rois_labels_bboxes: encode_impl(_rois_labels_bboxes[0], _rois_labels_bboxes[1], _rois_labels_bboxes[2]), (all_rois, all_labels, all_bboxes), dtype=(tf.float32, tf.float32, tf.int64, tf.float32))
 
     # return a list, of which each is:
     #   shape: [feature_h, feature_w, num_anchors, 4]
