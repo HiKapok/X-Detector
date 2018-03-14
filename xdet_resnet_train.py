@@ -201,6 +201,7 @@ def xdet_model_fn(features, labels, mode, params):
     shape = labels['targets'][-1]
     glabels = labels['targets'][:num_feature_layers][0]
     gtargets = labels['targets'][num_feature_layers : 2 * num_feature_layers][0]
+    #gtargets = tf.Print(gtargets, [gtargets], message='gtargets:', summarize=100)
     gscores = labels['targets'][2 * num_feature_layers : 3 * num_feature_layers][0]
 
     with tf.variable_scope(params['model_scope'], default_name = None, values = [features], reuse=tf.AUTO_REUSE):

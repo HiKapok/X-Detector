@@ -192,6 +192,8 @@ class AnchorEncoder(object):
         '''Do encoder for rois from SS or RPN
         fg_fraction: the fraction of fg in total bboxes
         '''
+
+        #all_rois = tf.Print(all_rois, [all_rois], message='all_rois:')
         expected_num_fg_rois = tf.cast(tf.round(tf.cast(rois_per_image, tf.float32) * fg_fraction), tf.int32)
         #expected_num_bg_rois = rois_per_image - expected_num_fg_rois
         def encode_impl(_rois, _labels, _bboxes):
@@ -201,7 +203,7 @@ class AnchorEncoder(object):
             _labels = tf.boolean_mask(_labels, _labels > 0)
             #print(_labels)
 
-            ymin, xmin, ymax, xmax = _rois[0], _rois[1], _rois[2], _rois[3]
+            ymin, xmin, ymax, xmax = _rois[:, 0], _rois[:, 1], _rois[:, 2], _rois[:, 3]
             vol_anchors = (xmax - xmin) * (ymax - ymin)
             # padding_maks = vol_anchors > 0
             # _rois, ymin, xmin, ymax, xmax = tf.boolean_mask(_rois, padding_maks), tf.boolean_mask(ymin, padding_maks), tf.boolean_mask(xmin, padding_maks), tf.boolean_mask(ymax, padding_maks), tf.boolean_mask(xmax, padding_maks)
@@ -315,6 +317,8 @@ class AnchorEncoder(object):
             gt_h = gt_ymax - gt_ymin
             gt_w = gt_xmax - gt_xmin
 
+            #ymin = tf.Print(ymin, [ymin, xmin, ymax, xmax], message='ymin:')
+
             yref, xref, href, wref = self.point2center(ymin, xmin, ymax, xmax)
             # get regression target for smooth_l1_loss
             gt_cy = (gt_cy - yref) / href / head_prior_scaling[0]
@@ -322,8 +326,12 @@ class AnchorEncoder(object):
             gt_h = tf.log(gt_h / href) / head_prior_scaling[2]
             gt_w = tf.log(gt_w / wref) / head_prior_scaling[3]
 
+            #gt_cy = tf.Print(gt_cy, [gt_cy, gt_cx, gt_h, gt_w], message='gt_cy:')
             total_rois = tf.concat([_rois, _bboxes], axis = 0)
             total_targets = tf.concat([tf.stack([gt_cy, gt_cx, gt_h, gt_w], axis=-1), tf.zeros_like(_bboxes, dtype=_bboxes.dtype)], axis = 0)
+
+            #_labels = tf.Print(_labels, [_labels], message='_labels:', summarize=1000)
+
             total_labels = tf.concat([gt_labels, _labels], axis = 0)
             total_scores = tf.concat([gt_scores, tf.ones_like(_labels, dtype=gt_scores.dtype)], axis = 0)
 
@@ -338,12 +346,16 @@ class AnchorEncoder(object):
                 # downsample with replacement
                 select_indices = tf.random_shuffle(tf.range(now_count))[:need_count]
                 return select_indices
+            #total_labels = tf.Print(total_labels, [total_labels], message='total_labels:', summarize=1000)
 
             #total_labels = tf.Print(total_labels, [tf.shape(total_labels), tf.shape(total_scores)], message='Notice Here: both the label and scores must be one vector.')
 
             positive_mask = total_labels > 0
             positive_indices = tf.squeeze(tf.where(positive_mask), axis = -1)
             n_positives = tf.shape(positive_indices)[0]
+
+            #n_positives = tf.Print(n_positives, [n_positives], message='n_positives:', summarize=1000)
+
             # either downsample or take all
             fg_select_indices = tf.cond(n_positives < expected_num_fg_rois, lambda : positive_indices, lambda : tf.gather(positive_indices, downsample_impl(n_positives, expected_num_fg_rois)))
             # now the all rois taken as positive is min(n_positives, expected_num_fg_rois)
@@ -367,7 +379,7 @@ class AnchorEncoder(object):
             # return tf.gather(total_rois, final_keep_indices), tf.gather(total_targets, final_keep_indices), tf.gather(total_labels, final_keep_indices), tf.gather(total_scores, final_keep_indices)
 
         #print(tf.map_fn(lambda  _rois_labels_bboxes: encode_impl(_rois_labels_bboxes[0], _rois_labels_bboxes[1], _rois_labels_bboxes[2]), (all_rois, all_labels, all_bboxes), dtype=(tf.float32, tf.float32, tf.int64, tf.float32)))
-        return tf.map_fn(lambda  _rois_labels_bboxes: encode_impl(_rois_labels_bboxes[0], _rois_labels_bboxes[1], _rois_labels_bboxes[2]), (all_rois, all_labels, all_bboxes), dtype=(tf.float32, tf.float32, tf.int64, tf.float32))
+        return tf.map_fn(lambda  _rois_labels_bboxes: encode_impl(_rois_labels_bboxes[0], _rois_labels_bboxes[1], _rois_labels_bboxes[2]), (all_rois, all_labels, all_bboxes), dtype=(tf.float32, tf.float32, tf.int64, tf.float32), back_prop=False)
 
     # return a list, of which each is:
     #   shape: [feature_h, feature_w, num_anchors, 4]
@@ -402,17 +414,18 @@ class AnchorEncoder(object):
         return pred_bboxes
 
     def ext_decode_rois(self, proposals_roi, pred_location, head_prior_scaling=[1., 1., 1., 1.]):
-        #print(yref.get_shape().as_list())
-        def decode_impl(roi, pred):
-            yref, xref, href, wref = self.point2center(roi[:, 0], roi[:, 1], roi[:, 2], roi[:, 3])
+        def ext_decode_impl(roi_pred):
+            roi, pred = roi_pred[0], roi_pred[1]
+            href, wref = (roi[:, 2] - roi[:, 0]), (roi[:, 3] - roi[:, 1])
+            yref, xref = roi[:, 0] + href / 2., roi[:, 1] + wref / 2.,
             #each_location = tf.reshape(each_location, yref.get_shape().as_list()[:-1] + [4])
             pred_h = tf.exp(pred[:, -2] * head_prior_scaling[2]) * href
             pred_w = tf.exp(pred[:, -1] * head_prior_scaling[3]) * wref
             pred_cy = pred[:, 0] * head_prior_scaling[0] * href + yref
             pred_cx = pred[:, 1] * head_prior_scaling[1] * wref + xref
-            return tf.stack(self.center2point(pred_cy, pred_cx, pred_h, pred_w), axis=-1)
+            return tf.stack([pred_cy - pred_h / 2., pred_cx - pred_w / 2., pred_cy + pred_h / 2., pred_cx + pred_w / 2.], axis=-1)
 
-        return tf.map_fn(decode_impl, [proposals_roi, pred_location])
+        return tf.map_fn(ext_decode_impl, (proposals_roi, pred_location), dtype=tf.float32, back_prop=False)
 
 
 class AnchorCreator(object):

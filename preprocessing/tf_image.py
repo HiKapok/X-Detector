@@ -512,7 +512,12 @@ def ssd_random_sample_patch_v0(image, labels, bboxes, name=None):
 
         return control_flow_ops.cond(math_ops.less(sampled_min_iou, 1.), lambda: sample_patch(image, labels, bboxes, sampled_min_iou), lambda: (image, labels, bboxes))
 
-
+# select one min_iou
+# sample _width and _height from [0-width] and [0-height]
+# check if the aspect ratio between 0.5-2.
+# select left_top point from (width - _width, height - _height)
+# check if this bbox has a min_iou with all ground_truth bboxes
+# keep ground_truth those center is in this sampled patch, if none then try again
 def ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.1, 0.3, 0.5, 0.7, 0.9, 1.], name=None):
     def sample_width_height(width, height):
         index = 0
@@ -556,7 +561,8 @@ def ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.1, 0.3, 0.5, 0.
         center_x, center_y = (bboxes[:, 1] + bboxes[:, 3]) / 2, (bboxes[:, 0] + bboxes[:, 2]) / 2
 
         def condition(index, roi, mask):
-            return tf.logical_or(tf.logical_and(tf.reduce_sum(tf.cast(mask, tf.int32)) < 1, tf.less(index, max_attempt)), tf.less(index, 1))
+            #return tf.logical_or(tf.logical_and(tf.reduce_sum(tf.cast(mask, tf.int32)) < 1, tf.less(index, max_attempt)), tf.less(index, 1))
+            return tf.reduce_sum(tf.cast(mask, tf.int32)) < 1
 
         def body(index, roi, mask):
             sampled_width, sampled_height = sample_width_height(float_width, float_height)
@@ -586,7 +592,7 @@ def ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.1, 0.3, 0.5, 0.
         mask_bboxes = bboxes
 
         def condition(index, roi, mask_labels, mask_bboxes):
-            return tf.logical_or(tf.logical_and(tf.reduce_sum(tf.cast(jaccard_with_anchors(roi, mask_bboxes) < min_iou, tf.int32)) > 0, tf.less(index, max_attempt)), tf.less(index, 1))
+            return tf.logical_or(tf.logical_or(tf.logical_and(tf.reduce_sum(tf.cast(jaccard_with_anchors(roi, mask_bboxes) < min_iou, tf.int32)) > 0, tf.less(index, max_attempt)), tf.less(index, 1)), tf.less(tf.shape(mask_labels)[0], 1))
 
         def body(index, roi, mask_labels, mask_bboxes):
             roi, mask_labels, mask_bboxes = check_roi_center(width, height, labels, bboxes)
@@ -594,7 +600,10 @@ def ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.1, 0.3, 0.5, 0.
 
         [index, roi, mask_labels, mask_bboxes] = tf.while_loop(condition, body, [index, roi, mask_labels, mask_bboxes], parallel_iterations=16, back_prop=False, swap_memory=True)
 
-        return tf.cast([roi[0]*tf.cast(height, tf.float32), roi[1]*tf.cast(width, tf.float32), (roi[2]-roi[0])*tf.cast(height, tf.float32), (roi[3]-roi[1])*tf.cast(width, tf.float32)], tf.int32), mask_labels, mask_bboxes
+        # return tf.cast([roi[0]*tf.cast(height, tf.float32), roi[1]*tf.cast(width, tf.float32), (roi[2]-roi[0])*tf.cast(height, tf.float32), (roi[3]-roi[1])*tf.cast(width, tf.float32)], tf.int32), mask_labels, mask_bboxes
+        # if we reach max_attempt then return no sample is done
+        return control_flow_ops.cond(tf.less(index, max_attempt), lambda : (tf.cast([roi[0]*tf.cast(height, tf.float32), roi[1]*tf.cast(width, tf.float32), (roi[2]-roi[0])*tf.cast(height, tf.float32), (roi[3]-roi[1])*tf.cast(width, tf.float32)], tf.int32), mask_labels, mask_bboxes), lambda : (tf.cast([0, 0, height, width], tf.int32), labels, bboxes))
+
 
     def sample_patch(image, labels, bboxes, min_iou):
         if image.get_shape().ndims != 3:
@@ -604,6 +613,7 @@ def ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.1, 0.3, 0.5, 0.
 
         roi_slice_range, mask_labels, mask_bboxes = check_roi_overlap(width, height, labels, bboxes, min_iou)
 
+        #roi_slice_range = tf.Print(roi_slice_range, [roi_slice_range,mask_labels, mask_bboxes], message='roi_slice_range:', summarize=1000)
         scale = tf.cast(tf.stack([height, width, height, width]), mask_bboxes.dtype)
         mask_bboxes = mask_bboxes * scale
 

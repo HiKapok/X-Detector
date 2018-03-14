@@ -33,7 +33,7 @@ from dataset import dataset_factory
 from preprocessing import preprocessing_factory
 from preprocessing import anchor_manipulator
 
-
+#--run_on_cloud=False --data_format=channels_last --batch_size=1 --log_every_n_steps=1
 # hardware related configuration
 tf.app.flags.DEFINE_integer(
     'num_readers', 16,
@@ -79,7 +79,7 @@ tf.app.flags.DEFINE_integer(
     'train_epochs', None,
     'The number of epochs to use for training.')
 tf.app.flags.DEFINE_integer(
-    'batch_size', 4,
+    'batch_size', 8,
     'Batch size for training and evaluation.')
 tf.app.flags.DEFINE_boolean(
     'using_ohem', True, 'Wether to use OHEM.')
@@ -90,7 +90,7 @@ tf.app.flags.DEFINE_integer(
     'roi_one_image', 64,
     'Batch size of RoIs for training in the second stage.')
 tf.app.flags.DEFINE_string(
-    'data_format', 'channels_last', # 'channels_first' or 'channels_last'
+    'data_format', 'channels_first', # 'channels_first' or 'channels_last'
     'A flag to override the data format used in the model. channels_first '
     'provides a performance boost on GPU but is not always compatible '
     'with CPU. If left unspecified, the data format will be chosen '
@@ -123,7 +123,7 @@ tf.app.flags.DEFINE_float(
     'rpn_neg_threshold', 0.3, 'Matching threshold for the negtive examples in the loss function for rpn.')
 # optimizer related configuration
 tf.app.flags.DEFINE_float(
-    'weight_decay', 0.0005, 'The weight decay on the model weights.')
+    'weight_decay', 0.0003, 'The weight decay on the model weights.')
 tf.app.flags.DEFINE_float(
     'momentum', 0.9,
     'The momentum for the MomentumOptimizer and RMSPropOptimizer.')
@@ -161,10 +161,10 @@ tf.app.flags.DEFINE_boolean(
     'ignore_missing_vars', True,
     'When restoring a checkpoint would ignore missing variables.')
 tf.app.flags.DEFINE_boolean(
-    'run_on_cloud', False,
+    'run_on_cloud', True,
     'Wether we will train on cloud (pre-trained model will be placed in the "data_dir/cloud_checkpoint_path").')
 tf.app.flags.DEFINE_string(
-    'cloud_checkpoint_path', 'xception_model/xception_model',
+    'cloud_checkpoint_path', 'xception_model/xception_model.ckpt',
     'The path to a checkpoint from which to fine-tune.')
 #CUDA_VISIBLE_DEVICES
 FLAGS = tf.app.flags.FLAGS
@@ -232,7 +232,7 @@ def input_pipeline():
         #print(list_from_batch[-4], list_from_batch[-3])
         return list_from_batch[-1], {'targets': list_from_batch[:-1],
                                     'rpn_decode_fn': lambda pred : anchor_encoder_decoder.decode_all_anchors([pred], squeeze_inner=True)[0],
-                                    'head_decode_fn': lambda pred : anchor_encoder_decoder.ext_decode_rois,
+                                    'head_decode_fn': lambda rois, pred : anchor_encoder_decoder.ext_decode_rois(rois, pred, head_prior_scaling=[1., 1., 1., 1.]),
                                     'rpn_encode_fn': lambda rois : anchor_encoder_decoder.ext_encode_rois(rois, list_from_batch[-4], list_from_batch[-3], FLAGS.roi_one_image, FLAGS.fg_ratio, 0.1, head_prior_scaling=[1., 1., 1., 1.]),
                                     'num_anchors_list': num_anchors_list}
     return input_fn
@@ -257,7 +257,7 @@ def modified_smooth_l1(bbox_pred, bbox_targets, bbox_inside_weights = 1., bbox_o
 
     return outside_mul
 
-def xdet_model_fn(features, labels, mode, params):
+def lighr_head_model_fn(features, labels, mode, params):
     """Our model_fn for ResNet to be used with our Estimator."""
     num_anchors_list = labels['num_anchors_list']
     num_feature_layers = len(num_anchors_list)
@@ -336,48 +336,58 @@ def xdet_model_fn(features, labels, mode, params):
             return tf.gather(cls_pred, final_keep_indices), tf.gather(location_pred, final_keep_indices), tf.cast(tf.gather(tf.clip_by_value(glabels, 0, params['num_classes']), final_keep_indices) > 0, tf.int64), tf.gather(gscores, final_keep_indices), tf.gather(gtargets, final_keep_indices)
 
         cls_pred, location_pred, glabels, gscores, gtargets = select_samples(cls_pred, location_pred, glabels, gscores, gtargets)
+
         # Calculate loss, which includes softmax cross entropy and L2 regularization.
         rpn_cross_entropy = tf.losses.sparse_softmax_cross_entropy(labels=glabels, logits=cls_pred)
 
         # Create a tensor named cross_entropy for logging purposes.
-        tf.identity(rpn_cross_entropy, name='rpn_cross_entropy_loss')
+        rpn_cross_entropy = tf.identity(rpn_cross_entropy, name='rpn_cross_entropy_loss')
         tf.summary.scalar('rpn_cross_entropy_loss', rpn_cross_entropy)
+
+        total_positive_mask = (glabels > 0)
+        gtargets = tf.boolean_mask(gtargets, tf.stop_gradient(total_positive_mask))
+        location_pred = tf.boolean_mask(location_pred, tf.stop_gradient(total_positive_mask))
+        #gtargets = tf.Print(gtargets, [gtargets], message='gtargets:', summarize=100)
 
         rpn_l1_distance = modified_smooth_l1(location_pred, gtargets, sigma=1.)
         rpn_loc_loss = tf.reduce_mean(tf.reduce_sum(rpn_l1_distance, axis=-1))
         rpn_loc_loss = tf.identity(rpn_loc_loss, name='rpn_location_loss')
         tf.summary.scalar('rpn_location_loss', rpn_loc_loss)
         tf.losses.add_loss(rpn_loc_loss)
+
+        rpn_loss = tf.identity(rpn_loc_loss + rpn_cross_entropy, name='rpn_loss')
+        tf.summary.scalar('rpn_loss', rpn_loss)
         #print(rpn_loc_loss)
 
-        proposals_bboxes, proposals_targets, proposals_labels, proposals_scores = xception_body.get_proposals(rpn_object_score, rpn_bboxes_pred, labels['rpn_encode_fn'], params['rpn_pre_nms_top_n'], params['rpn_post_nms_top_n'], params['nms_threshold'], params['rpn_min_size'], params['data_format'])
-
+        proposals_bboxes, proposals_targets, proposals_labels, proposals_scores = xception_body.get_proposals(rpn_object_score, rpn_bboxes_pred, labels['rpn_encode_fn'], params['rpn_pre_nms_top_n'], params['rpn_post_nms_top_n'], params['nms_threshold'], params['rpn_min_size'], (mode == tf.estimator.ModeKeys.TRAIN), params['data_format'])
+        #proposals_targets = tf.Print(proposals_targets, [proposals_targets], message='proposals_targets0:')
         def head_loss_func(cls_score, bboxes_reg, select_indices, proposals_targets, proposals_labels):
             if select_indices is not None:
                 proposals_targets = tf.gather(proposals_targets, select_indices, axis=1)
                 proposals_labels = tf.gather(proposals_labels, select_indices, axis=1)
             # Calculate loss, which includes softmax cross entropy and L2 regularization.
             head_cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=proposals_labels, logits=cls_score)
+
+            total_positive_mask = tf.cast((proposals_labels > 0), tf.float32)
+            # proposals_targets = tf.boolean_mask(proposals_targets, tf.stop_gradient(total_positive_mask))
+            # bboxes_reg = tf.boolean_mask(bboxes_reg, tf.stop_gradient(total_positive_mask))
             head_loc_loss = modified_smooth_l1(bboxes_reg, proposals_targets, sigma=1.)
-            head_loc_loss = tf.reduce_sum(head_loc_loss, axis=-1)
+            head_loc_loss = tf.reduce_sum(head_loc_loss, axis=-1) * total_positive_mask
             if (params['using_ohem'] and (select_indices is not None)) or (not params['using_ohem']):
                 head_cross_entropy_loss = tf.reduce_mean(head_cross_entropy)
                 head_cross_entropy_loss = tf.identity(head_cross_entropy_loss, name='head_cross_entropy_loss')
                 tf.summary.scalar('head_cross_entropy_loss', head_cross_entropy_loss)
 
-                head_location_loss = tf.reduce_mean(head_loc_loss)
+                head_location_loss = tf.reduce_mean(head_loc_loss)/params['fg_ratio']
                 head_location_loss = tf.identity(head_location_loss, name='head_location_loss')
                 tf.summary.scalar('head_location_loss', head_location_loss)
 
-                # print(head_cross_entropy_loss)
-                # print(head_location_loss)
+            return head_cross_entropy + head_loc_loss/params['fg_ratio']
 
-            return head_cross_entropy + head_loc_loss
-
-        head_loss = xception_body.get_head(large_sep_feature, ps_roi_align, 7, 7, lambda cls, bbox, indices : head_loss_func(cls, bbox, indices, proposals_targets, proposals_labels), proposals_bboxes, proposals_targets, proposals_labels, proposals_scores, params['num_classes'], (mode == tf.estimator.ModeKeys.TRAIN), params['using_ohem'], params['ohem_roi_one_image'], params['data_format'], 'final_head')
+        head_loss = xception_body.get_head(large_sep_feature, lambda input_, bboxes_, grid_width_, grid_height_ : ps_roi_align(input_, bboxes_, grid_width_, grid_height_, pool_method), 7, 7, lambda cls, bbox, indices : head_loss_func(cls, bbox, indices, proposals_targets, proposals_labels), proposals_bboxes, params['num_classes'], (mode == tf.estimator.ModeKeys.TRAIN), params['using_ohem'], params['ohem_roi_one_image'], params['data_format'], 'final_head')
 
         # Create a tensor named cross_entropy for logging purposes.
-        tf.identity(head_loss, name='head_loss')
+        head_loss = tf.identity(head_loss, name='head_loss')
         tf.summary.scalar('head_loss', head_loss)
 
         tf.losses.add_loss(head_loss)
@@ -387,7 +397,7 @@ def xdet_model_fn(features, labels, mode, params):
 
     # Add weight decay to the loss. We exclude the batch norm variables because
     # doing so leads to a small improvement in accuracy.
-    loss = rpn_cross_entropy + rpn_loc_loss + head_loss + params['weight_decay'] * tf.add_n(
+    loss = 10 * rpn_cross_entropy + rpn_loc_loss + head_loss + params['weight_decay'] * tf.add_n(
       [tf.nn.l2_loss(v) for v in tf.trainable_variables()
        if 'batch_normalization' not in v.name])
     total_loss = tf.identity(loss, name='total_loss')
@@ -442,7 +452,7 @@ def main(_):
                                         session_config=config)
 
     xdetector = tf.estimator.Estimator(
-        model_fn=xdet_model_fn, model_dir=FLAGS.model_dir, config=run_config,
+        model_fn=lighr_head_model_fn, model_dir=FLAGS.model_dir, config=run_config,
         params={
             'resnet_size': FLAGS.resnet_size,
             'data_format': FLAGS.data_format,
@@ -480,6 +490,7 @@ def main(_):
         'learning_rate': 'learning_rate',
         'rpn_cross_entropy_loss': 'xception_lighthead/rpn_cross_entropy_loss',
         'rpn_location_loss': 'xception_lighthead/rpn_location_loss',
+        'rpn_loss': 'xception_lighthead/rpn_loss',
         'head_loss': 'xception_lighthead/head_loss',
         'head_cross_entropy_loss': 'xception_lighthead/final_head/head_cross_entropy_loss',
         'head_location_loss': 'xception_lighthead/final_head/head_location_loss',
@@ -488,11 +499,11 @@ def main(_):
 
     logging_hook = tf.train.LoggingTensorHook(tensors=tensors_to_log, every_n_iter=FLAGS.log_every_n_steps)
 
-    debug_hook = tf_debug.LocalCLIDebugHook(thread_name_filter="MainThread$")
-    debug_hook.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
-
     print('Starting a training cycle.')
-    #xdetector.train(input_fn=input_pipeline(), hooks=[debug_hook])
+
+    # debug_hook = tf_debug.LocalCLIDebugHook(thread_name_filter="MainThread$")
+    # debug_hook.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
+    # xdetector.train(input_fn=input_pipeline(), hooks=[debug_hook])
     xdetector.train(input_fn=input_pipeline(), hooks=[logging_hook])
 
 if __name__ == '__main__':
