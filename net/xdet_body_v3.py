@@ -21,7 +21,9 @@ import tensorflow as tf
 from . import resnet_v2
 from . import depth_conv2d
 
-initializer_to_use = lambda : tf.truncated_normal_initializer(mean=0.0, stddev=0.005)
+#initializer_to_use = tf.glorot_uniform_initializer
+initializer_to_use = tf.glorot_uniform_initializer
+conv_bn_initializer_to_use = lambda : tf.truncated_normal_initializer(mean=0.0, stddev=0.005)
 
 def dilate_conv2d(inputs, filters, kernel_size, dilation_rate, data_format):
   """Strided 2-D convolution with explicit padding."""
@@ -30,7 +32,7 @@ def dilate_conv2d(inputs, filters, kernel_size, dilation_rate, data_format):
   return tf.layers.conv2d(
       inputs=inputs, filters=filters, kernel_size=kernel_size, strides=1, dilation_rate = dilation_rate,
       padding='SAME', use_bias=False,#True,
-      kernel_initializer=initializer_to_use(),
+      kernel_initializer=conv_bn_initializer_to_use(),
       bias_initializer=None,#tf.zeros_initializer(),
       data_format=data_format)
 
@@ -64,7 +66,7 @@ def xdet_bottleneck_block(inputs, filters, is_training, projection_shortcut,
 
   inputs = resnet_v2.conv2d_fixed_padding(
       inputs=inputs, filters=filters, kernel_size=1, strides=1,
-      data_format=data_format, kernel_initializer=initializer_to_use)
+      data_format=data_format, kernel_initializer=conv_bn_initializer_to_use)
 
   inputs = resnet_v2.batch_norm_relu(inputs, is_training, data_format)
   inputs = dilate_conv2d(
@@ -75,7 +77,7 @@ def xdet_bottleneck_block(inputs, filters, is_training, projection_shortcut,
   # default activation is None
   inputs = resnet_v2.conv2d_fixed_padding(
       inputs=inputs, filters=4 * filters, kernel_size=1, strides=1,
-      data_format=data_format, kernel_initializer=initializer_to_use)
+      data_format=data_format, kernel_initializer=conv_bn_initializer_to_use)
 
   return inputs + shortcut
 
@@ -180,7 +182,7 @@ def xdet_resnet_v3_generator(block_fn, layers, data_format=None):
 
     inputs = resnet_v2.conv2d_fixed_padding(
         inputs=inputs, filters=64, kernel_size=7, strides=2,
-        data_format=data_format, kernel_initializer=initializer_to_use)
+        data_format=data_format, kernel_initializer=conv_bn_initializer_to_use)
     inputs = tf.identity(inputs, 'initial_conv')
     inputs = tf.layers.max_pooling2d(
         inputs=inputs, pool_size=3, strides=2, padding='SAME',
@@ -216,19 +218,19 @@ def xdet_resnet_v3_generator(block_fn, layers, data_format=None):
       output_conv5 = resnet_v2.batch_norm_relu(output_conv5, is_training, data_format)
       output_conv5 = tf.layers.conv2d(inputs=output_conv5, filters=256, kernel_size=1, strides=1,
                                   padding='SAME', use_bias=False, activation=None,
-                                  kernel_initializer=initializer_to_use(),
+                                  kernel_initializer=conv_bn_initializer_to_use(),
                                   bias_initializer=None,#tf.zeros_initializer(),
                                   data_format=data_format)
       output_conv6 = resnet_v2.batch_norm_relu(output_conv6, is_training, data_format)
       output_conv6 = tf.layers.conv2d(inputs=output_conv6, filters=256, kernel_size=1, strides=1,
                                   padding='SAME', use_bias=False, activation=None,
-                                  kernel_initializer=initializer_to_use(),
+                                  kernel_initializer=conv_bn_initializer_to_use(),
                                   bias_initializer=None,#tf.zeros_initializer(),
                                   data_format=data_format)
       output_conv7 = resnet_v2.batch_norm_relu(output_conv7, is_training, data_format)
       output_conv7 = tf.layers.conv2d(inputs=output_conv7, filters=256, kernel_size=1, strides=1,
                                   padding='SAME', use_bias=False, activation=None,
-                                  kernel_initializer=initializer_to_use(),
+                                  kernel_initializer=conv_bn_initializer_to_use(),
                                   bias_initializer=None,#tf.zeros_initializer(),
                                   data_format=data_format)
       if data_format == 'channels_first':
@@ -253,13 +255,13 @@ def pred_inception_module(net_input, depth_output, is_training, data_format, var
     with tf.variable_scope('Branch_0'):
       branch_0 = tf.layers.conv2d(inputs=net_input, filters=depth_output, kernel_size=3, strides=1,
                                   padding='SAME', use_bias=True, activation=None,
-                                  kernel_initializer=initializer_to_use(),
+                                  kernel_initializer=conv_bn_initializer_to_use(),
                                   bias_initializer=tf.zeros_initializer(),
                                   data_format=data_format)
     with tf.variable_scope('Branch_1'):
       branch_1 = tf.layers.conv2d(inputs=net_input, filters=depth_output, kernel_size=1, strides=1,
                                   padding='SAME', use_bias=True, activation=None,
-                                  kernel_initializer=initializer_to_use(),
+                                  kernel_initializer=conv_bn_initializer_to_use(),
                                   bias_initializer=tf.zeros_initializer(),
                                   data_format=data_format)
 
@@ -277,7 +279,7 @@ def xdet_head(body_cls_input, body_regress_input, num_classes, num_anchors, is_t
       data_format = ('channels_first' if tf.test.is_built_with_cuda() else 'channels_last')
 
     def pred_submodule(input_feature, output_channals):
-      inputs = resnet_v2.conv2d_fixed_padding(inputs=input_feature, filters=output_channals, kernel_size=3, strides=1, data_format=data_format, kernel_initializer=initializer_to_use)
+      inputs = resnet_v2.conv2d_fixed_padding(inputs=input_feature, filters=output_channals, kernel_size=3, strides=1, data_format=data_format, kernel_initializer=conv_bn_initializer_to_use)
       return resnet_v2.batch_norm_relu(inputs, is_training, data_format)
 
     # never cause information bottleneck

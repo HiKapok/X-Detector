@@ -17,15 +17,67 @@ import math
 import tensorflow as tf
 import numpy as np
 
+from tensorflow.contrib.image.python.ops import image_ops
+
+def areas(bboxes):
+    ymin, xmin, ymax, xmax = tf.split(bboxes, 4, axis=1)
+    return (xmax - xmin) * (ymax - ymin)
+def intersection(bboxes, gt_bboxes):
+    ymin, xmin, ymax, xmax = tf.split(bboxes, 4, axis=1)
+    gt_ymin, gt_xmin, gt_ymax, gt_xmax = [tf.transpose(b, perm=[1, 0]) for b in tf.split(gt_bboxes, 4, axis=1)]
+
+    int_ymin = tf.maximum(ymin, gt_ymin)
+    int_xmin = tf.maximum(xmin, gt_xmin)
+    int_ymax = tf.minimum(ymax, gt_ymax)
+    int_xmax = tf.minimum(xmax, gt_xmax)
+    h = tf.maximum(int_ymax - int_ymin, 0.)
+    w = tf.maximum(int_xmax - int_xmin, 0.)
+
+    return h * w
+def iou_matrix(bboxes, gt_bboxes):
+    inter_vol = intersection(bboxes, gt_bboxes)
+    union_vol = areas(bboxes) + tf.transpose(areas(gt_bboxes), perm=[1, 0]) - inter_vol
+
+    return tf.where(tf.equal(inter_vol, 0.0),
+                    tf.zeros_like(inter_vol), tf.truediv(inter_vol, union_vol))
+
+def do_dual_max_match(overlap_matrix, high_thres, low_thres, ignore_between=True, gt_max_first=False):
+    '''
+    overlap_matrix: num_gt * num_anchors
+    '''
+    anchors_to_gt = tf.argmax(overlap_matrix, axis=0)
+    match_values = tf.reduce_max(overlap_matrix, axis=0)
+
+    positive_mask = tf.greater_equal(match_values, high_thres)
+    less_mask = tf.less(match_values, low_thres)
+    between_mask = tf.logical_and(tf.less(match_values, high_thres), tf.greater_equal(match_values, low_thres))
+    negative_mask = less_mask if ignore_between else between_mask
+    ignore_mask = between_mask if ignore_between else less_mask
+
+    match_indices = tf.where(negative_mask, -1 * tf.ones_like(anchors_to_gt), anchors_to_gt)
+    match_indices = tf.where(ignore_mask, -2 * tf.ones_like(match_indices), match_indices)
+
+    anchors_to_gt_mask = tf.one_hot(tf.clip_by_value(match_indices, -1, tf.cast(tf.shape(overlap_matrix)[0], tf.int64)), tf.shape(overlap_matrix)[0], on_value=1, off_value=0, axis=0, dtype=tf.int32)
+
+    gt_to_anchors = tf.argmax(overlap_matrix, axis=1)
+
+    if gt_max_first:
+        left_gt_to_anchors_mask = tf.one_hot(gt_to_anchors, tf.shape(overlap_matrix)[1], on_value=1, off_value=0, axis=1, dtype=tf.int64)
+    else:
+        left_gt_to_anchors_mask = tf.cast(tf.logical_and(tf.reduce_max(anchors_to_gt_mask, axis=1, keep_dims=True) < 1, tf.one_hot(gt_to_anchors, tf.shape(overlap_matrix)[1], on_value=True, off_value=False, axis=1, dtype=tf.bool)), tf.int64)
+
+    selected_scores = tf.gather_nd(overlap_matrix, tf.stack([tf.where(tf.reduce_max(left_gt_to_anchors_mask, axis=0) > 0, tf.argmax(left_gt_to_anchors_mask, axis=0), anchors_to_gt), tf.range(tf.cast(tf.shape(overlap_matrix)[1], tf.int64))], axis=1))
+    return tf.where(tf.reduce_max(left_gt_to_anchors_mask, axis=0) > 0, tf.argmax(left_gt_to_anchors_mask, axis=0), match_indices), selected_scores
 
 class AnchorEncoder(object):
-    def __init__(self, anchors, num_classes, allowed_borders, ignore_threshold, prior_scaling, rpn_fg_thres = 0.5, rpn_bg_high_thres = 0.5, rpn_bg_low_thres = 0.):
+    def __init__(self, anchors, num_classes, allowed_borders, positive_threshold, ignore_threshold, prior_scaling, rpn_fg_thres = 0.5, rpn_bg_high_thres = 0.5, rpn_bg_low_thres = 0.):
         super(AnchorEncoder, self).__init__()
         self._labels = None
         self._bboxes = None
         self._anchors = anchors
         self._num_classes = num_classes
         self._allowed_borders = allowed_borders
+        self._positive_threshold = positive_threshold
         self._ignore_threshold = ignore_threshold
         self._prior_scaling = prior_scaling
         self._rpn_fg_thres = rpn_fg_thres
@@ -50,129 +102,188 @@ class AnchorEncoder(object):
         #                                   .
         #                                   .
         # [[anchor_0, anchor_1, anchor_2, ...], [anchor_0, anchor_1, anchor_2, ...], [anchor_0, anchor_1, anchor_2, ...], ...]]
-        ymin, xmin, ymax, xmax = self.center2point(yref, xref, href, wref)
+        ymin_, xmin_, ymax_, xmax_ = self.center2point(yref, xref, href, wref)
 
-        vol_anchors = (xmax - xmin) * (ymax - ymin)
+        ymin, xmin, ymax, xmax = tf.reshape(ymin_, [-1]), tf.reshape(xmin_, [-1]), tf.reshape(ymax_, [-1]), tf.reshape(xmax_, [-1])
+        anchors_point = tf.stack([ymin, xmin, ymax, xmax], axis=-1)
 
         inside_mask = tf.logical_and(tf.logical_and(ymin >= -allowed_border*1., xmin >= -allowed_border*1.),
                                                                 tf.logical_and(ymax < (1. + allowed_border*1.), xmax < (1. + allowed_border*1.)))
 
-        # store every jaccard score while loop all ground truth, will update depends the score of anchor and current ground_truth
-        gt_labels = tf.zeros_like(ymin, dtype=tf.int64)
-        gt_scores = tf.zeros_like(ymin, dtype=tf.float32)
+        overlap_matrix = iou_matrix(self._bboxes, anchors_point) * tf.cast(tf.expand_dims(inside_mask, 0), tf.float32)
 
-        gt_ymin = tf.zeros_like(ymin, dtype=tf.float32)
-        gt_xmin = tf.zeros_like(ymin, dtype=tf.float32)
-        gt_ymax = tf.ones_like(ymin, dtype=tf.float32)
-        gt_xmax = tf.ones_like(ymin, dtype=tf.float32)
+        matched_gt, gt_scores = do_dual_max_match(overlap_matrix, self._positive_threshold, self._ignore_threshold)
 
-        max_mask = tf.cast(tf.zeros_like(ymin, dtype=tf.int32), tf.bool)
+        matched_gt_mask = matched_gt > -1
+        matched_indices = tf.clip_by_value(matched_gt, 0, tf.int64.max)
+        gt_labels = tf.gather(self._labels, matched_indices)
 
-        def safe_divide(numerator, denominator):
-            return tf.where(
-                tf.greater(denominator, 0),
-                tf.divide(numerator, denominator),
-                tf.zeros_like(denominator))
+        gt_ymin, gt_xmin, gt_ymax, gt_xmax = [tf.reshape(b, tf.shape(ymin_)) for b in tf.split(tf.gather(self._bboxes, matched_indices), 4, axis=1)]
 
-        def jaccard_with_anchors(bbox):
-            """Compute jaccard score between a box and the anchors.
-            """
-            # the inner square
-            inner_ymin = tf.maximum(ymin, bbox[0])
-            inner_xmin = tf.maximum(xmin, bbox[1])
-            inner_ymax = tf.minimum(ymax, bbox[2])
-            inner_xmax = tf.minimum(xmax, bbox[3])
-            h = tf.maximum(inner_ymax - inner_ymin, 0.)
-            w = tf.maximum(inner_xmax - inner_xmin, 0.)
-
-            inner_vol = h * w
-            union_vol = vol_anchors - inner_vol \
-                + (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
-            jaccard = safe_divide(inner_vol, union_vol)
-            return jaccard
-
-        def condition(i, gt_labels, gt_scores,
-                      gt_ymin, gt_xmin, gt_ymax, gt_xmax, max_mask):
-            return tf.less(i, tf.shape(self._labels))[0]
-
-        def body(i, gt_labels, gt_scores,
-                 gt_ymin, gt_xmin, gt_ymax, gt_xmax, max_mask):
-            """Body: update gture labels, scores and bboxes.
-            Follow the original SSD paper for that purpose:
-              - assign values when jaccard > 0.5;
-              - only update if beat the score of other bboxes.
-            """
-            # get i_th groud_truth(label && bbox)
-            label = self._labels[i]
-            bbox = self._bboxes[i]
-            # current ground_truth's overlap with all others' anchors
-            jaccard = tf.cast(inside_mask, tf.float32) * jaccard_with_anchors(bbox)
-            #jaccard = jaccard_with_anchors(bbox)
-            # the index of the max overlap for current ground_truth
-            max_jaccard = tf.reduce_max(jaccard)
-            cur_max_indice_mask = tf.equal(jaccard, max_jaccard)
-
-            # the locations where current overlap is higher than before
-            greater_than_current_mask = tf.greater(jaccard, gt_scores)
-            # we will update these locations as well as the current max_overlap location for this ground_truth
-            locations_to_update = tf.logical_or(greater_than_current_mask, cur_max_indice_mask)
-            # but we will ignore those locations where is the max_overlap for any ground_truth before
-            locations_to_update_with_mask = tf.logical_and(locations_to_update, tf.logical_not(max_mask))
-            # for current max_overlap
-            # for those current overlap is higher than before
-            # for those locations where is not the max_overlap for any before ground_truth
-            # update scores, so the terminal scores are either those max_overlap along the way or the max_overlap for any ground_truth
-            gt_scores = tf.where(locations_to_update_with_mask, jaccard, gt_scores)
-
-            # !!! because the difference of rules for score and label update !!!
-            # !!! so before we get the negtive examples we must use labels as positive mask first !!!
-            # for current max_overlap
-            # for current jaccard higher than before and higher than threshold (those scores are lower than is is ignored)
-            # for those locations where is not the max_overlap for any before ground_truth
-            # update labels, so the terminal labels are either those with max_overlap and higher than threshold along the way or the max_overlap for any ground_truth
-            locations_to_update_labels = tf.logical_and(tf.logical_or(tf.greater(tf.cast(greater_than_current_mask, tf.float32) * jaccard, self._ignore_threshold), cur_max_indice_mask), tf.logical_not(max_mask))
-            locations_to_update_labels_mask = tf.cast(tf.logical_and(locations_to_update_labels, label < self._num_classes), tf.float32)
-
-            gt_labels = tf.cast(locations_to_update_labels_mask, tf.int64) * label + (1 - tf.cast(locations_to_update_labels_mask, tf.int64)) * gt_labels
-            #gt_scores = tf.where(mask, jaccard, gt_scores)
-            # update ground truth for each anchors depends on the mask
-            gt_ymin = locations_to_update_labels_mask * bbox[0] + (1 - locations_to_update_labels_mask) * gt_ymin
-            gt_xmin = locations_to_update_labels_mask * bbox[1] + (1 - locations_to_update_labels_mask) * gt_xmin
-            gt_ymax = locations_to_update_labels_mask * bbox[2] + (1 - locations_to_update_labels_mask) * gt_ymax
-            gt_xmax = locations_to_update_labels_mask * bbox[3] + (1 - locations_to_update_labels_mask) * gt_xmax
-
-            # update max_mask along the way
-            max_mask = tf.logical_or(max_mask, cur_max_indice_mask)
-
-            return [i+1, gt_labels, gt_scores,
-                    gt_ymin, gt_xmin, gt_ymax, gt_xmax, max_mask]
-        # Main loop definition.
-        # iterate betwween all ground_truth to encode anchors
-        i = 0
-        [i, gt_labels, gt_scores,
-         gt_ymin, gt_xmin,
-         gt_ymax, gt_xmax, max_mask] = tf.while_loop(condition, body,
-                                               [i, gt_labels, gt_scores,
-                                                gt_ymin, gt_xmin,
-                                                gt_ymax, gt_xmax, max_mask], parallel_iterations=16, back_prop=False, swap_memory=True)
-        # give -1 to the label of anchors those are outside image
-        inside_int_mask = tf.cast(inside_mask, tf.int64)
-        gt_labels =  (1 - inside_int_mask) * -1 + inside_int_mask * gt_labels
-        # transform to center / size for later regression target calculating
+        # Transform to center / size.
         gt_cy = (gt_ymax + gt_ymin) / 2.
         gt_cx = (gt_xmax + gt_xmin) / 2.
         gt_h = gt_ymax - gt_ymin
         gt_w = gt_xmax - gt_xmin
-        # get regression target for smooth_l1_loss
+        # Encode features.
         # the prior_scaling (in fact is 5 and 10) is use for balance the regression loss of center and with(or height)
         # (x-x_ref)/x_ref * 10 + log(w/w_ref) * 5
         gt_cy = (gt_cy - yref) / href / self._prior_scaling[0]
         gt_cx = (gt_cx - xref) / wref / self._prior_scaling[1]
         gt_h = tf.log(gt_h / href) / self._prior_scaling[2]
         gt_w = tf.log(gt_w / wref) / self._prior_scaling[3]
-
+        # Use SSD ordering: x / y / w / h instead of ours.
+        gt_localizations = tf.stack([gt_cx, gt_cy, gt_w, gt_h], axis=-1)
         # now gt_localizations is our regression object
-        return gt_labels, tf.stack([gt_cy, gt_cx, gt_h, gt_w], axis=-1), gt_scores
+
+        return gt_labels * tf.cast(matched_gt_mask, tf.int64) + (-1 * tf.cast(matched_gt < -1, tf.int64)), tf.expand_dims(tf.reshape(tf.cast(matched_gt_mask, tf.float32), tf.shape(ymin_)), -1) * gt_localizations, gt_scores
+    # def encode_anchor(self, anchor, allowed_border):
+    #     assert self._labels is not None, 'must provide labels to encode anchors.'
+    #     assert self._bboxes is not None, 'must provide bboxes to encode anchors.'
+    #     # y, x, h, w are all in range [0, 1] relative to the original image size
+    #     yref, xref, href, wref = tf.expand_dims(anchor[0], axis=-1), tf.expand_dims(anchor[1], axis=-1), anchor[2], anchor[3]
+    #     # for the shape of ymin, xmin, ymax, xmax
+    #     # [[[anchor_0, anchor_1, anchor_2, ...], [anchor_0, anchor_1, anchor_2, ...], [anchor_0, anchor_1, anchor_2, ...], ...],
+    #     # [[anchor_0, anchor_1, anchor_2, ...], [anchor_0, anchor_1, anchor_2, ...], [anchor_0, anchor_1, anchor_2, ...], ...],
+    #     #                                   .
+    #     #                                   .
+    #     # [[anchor_0, anchor_1, anchor_2, ...], [anchor_0, anchor_1, anchor_2, ...], [anchor_0, anchor_1, anchor_2, ...], ...]]
+    #     ymin_, xmin_, ymax_, xmax_ = self.center2point(yref, xref, href, wref)
+
+    #     vol_anchors = (xmax - xmin) * (ymax - ymin)
+
+    #     inside_mask = tf.logical_and(tf.logical_and(ymin >= -allowed_border*1., xmin >= -allowed_border*1.),
+    #                                                             tf.logical_and(ymax < (1. + allowed_border*1.), xmax < (1. + allowed_border*1.)))
+
+    #     # store every jaccard score while loop all ground truth, will update depends the score of anchor and current ground_truth
+    #     gt_labels = tf.zeros_like(ymin, dtype=tf.int64)
+    #     gt_scores = tf.zeros_like(ymin, dtype=tf.float32)
+
+    #     gt_ymin = tf.zeros_like(ymin, dtype=tf.float32)
+    #     gt_xmin = tf.zeros_like(ymin, dtype=tf.float32)
+    #     gt_ymax = tf.ones_like(ymin, dtype=tf.float32)
+    #     gt_xmax = tf.ones_like(ymin, dtype=tf.float32)
+
+    #     max_mask = tf.cast(tf.zeros_like(ymin, dtype=tf.int32), tf.bool)
+
+    #     def safe_divide(numerator, denominator):
+    #         return tf.where(
+    #             tf.greater(denominator, 0),
+    #             tf.divide(numerator, denominator),
+    #             tf.zeros_like(denominator))
+
+    #     def jaccard_with_anchors(bbox):
+    #         """Compute jaccard score between a box and the anchors.
+    #         """
+    #         # the inner square
+    #         inner_ymin = tf.maximum(ymin, bbox[0])
+    #         inner_xmin = tf.maximum(xmin, bbox[1])
+    #         inner_ymax = tf.minimum(ymax, bbox[2])
+    #         inner_xmax = tf.minimum(xmax, bbox[3])
+    #         h = tf.maximum(inner_ymax - inner_ymin, 0.)
+    #         w = tf.maximum(inner_xmax - inner_xmin, 0.)
+
+    #         inner_vol = h * w
+    #         union_vol = vol_anchors - inner_vol \
+    #             + (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+    #         jaccard = safe_divide(inner_vol, union_vol)
+    #         return jaccard
+
+    #     def condition(i, gt_labels, gt_scores,
+    #                   gt_ymin, gt_xmin, gt_ymax, gt_xmax, max_mask):
+    #         return tf.less(i, tf.shape(self._labels))[0]
+
+    #     def body(i, gt_labels, gt_scores,
+    #              gt_ymin, gt_xmin, gt_ymax, gt_xmax, max_mask):
+    #         """Body: update gture labels, scores and bboxes.
+    #         Follow the original SSD paper for that purpose:
+    #           - assign values when jaccard > 0.5;
+    #           - only update if beat the score of other bboxes.
+    #         """
+    #         # get i_th groud_truth(label && bbox)
+    #         label = self._labels[i]
+    #         bbox = self._bboxes[i]
+    #         # # current ground_truth's overlap with all others' anchors
+    #         # jaccard = tf.cast(inside_mask, tf.float32) * jaccard_with_anchors(bbox)
+    #         # #jaccard = jaccard_with_anchors(bbox)
+    #         # # the index of the max overlap for current ground_truth
+    #         # max_jaccard = tf.reduce_max(jaccard)
+    #         # cur_max_indice_mask = tf.equal(jaccard, max_jaccard)
+
+    #         # current ground_truth's overlap with all others' anchors
+    #         jaccard = tf.cast(inside_mask, tf.float32) * jaccard_with_anchors(bbox)
+    #         # the index of the max overlap for current ground_truth
+    #         max_jaccard = tf.maximum(tf.reduce_max(jaccard), ignore_threshold)
+    #         #max_jaccard = tf.Print(max_jaccard, [max_jaccard], message='max_jaccard: ', summarize=500)
+    #         all_cur_max_indice_mask = tf.equal(jaccard, max_jaccard)
+
+    #         choice_jaccard = tf.cast(all_cur_max_indice_mask, tf.float32) * jaccard * tf.random_uniform(tf.shape(all_cur_max_indice_mask), minval=1., maxval=10.)
+
+    #         max_choice_jaccard = tf.maximum(tf.reduce_max(choice_jaccard), ignore_threshold)
+    #         cur_max_indice_mask = tf.equal(choice_jaccard, max_choice_jaccard)
+
+    #         # the locations where current overlap is higher than before
+    #         greater_than_current_mask = tf.greater(jaccard, gt_scores)
+    #         # we will update these locations as well as the current max_overlap location for this ground_truth
+    #         locations_to_update = tf.logical_or(greater_than_current_mask, cur_max_indice_mask)
+    #         # but we will ignore those locations where is the max_overlap for any ground_truth before
+    #         locations_to_update_with_mask = tf.logical_and(locations_to_update, tf.logical_not(max_mask))
+    #         # for current max_overlap
+    #         # for those current overlap is higher than before
+    #         # for those locations where is not the max_overlap for any before ground_truth
+    #         # update scores, so the terminal scores are either those max_overlap along the way or the max_overlap for any ground_truth
+    #         gt_scores = tf.where(locations_to_update_with_mask, jaccard, gt_scores)
+
+    #         # !!! because the difference of rules for score and label update !!!
+    #         # !!! so before we get the negtive examples we must use labels as positive mask first !!!
+    #         # for current max_overlap
+    #         # for current jaccard higher than before and higher than threshold (those scores are lower than is is ignored)
+    #         # for those locations where is not the max_overlap for any before ground_truth
+    #         # update labels, so the terminal labels are either those with max_overlap and higher than threshold along the way or the max_overlap for any ground_truth
+    #         # locations_to_update_labels = tf.logical_or(tf.greater(tf.cast(greater_than_current_mask, tf.float32) * jaccard, self._ignore_threshold), cur_max_indice_mask)
+    #         locations_to_update_labels = tf.logical_and(tf.logical_or(tf.greater(tf.cast(greater_than_current_mask, tf.float32) * jaccard, self._ignore_threshold), cur_max_indice_mask), tf.logical_not(max_mask))
+    #         locations_to_update_labels_mask = tf.cast(tf.logical_and(locations_to_update_labels, label < self._num_classes), tf.float32)
+
+    #         gt_labels = tf.cast(locations_to_update_labels_mask, tf.int64) * label + (1 - tf.cast(locations_to_update_labels_mask, tf.int64)) * gt_labels
+    #         #gt_scores = tf.where(mask, jaccard, gt_scores)
+    #         # update ground truth for each anchors depends on the mask
+    #         gt_ymin = locations_to_update_labels_mask * bbox[0] + (1 - locations_to_update_labels_mask) * gt_ymin
+    #         gt_xmin = locations_to_update_labels_mask * bbox[1] + (1 - locations_to_update_labels_mask) * gt_xmin
+    #         gt_ymax = locations_to_update_labels_mask * bbox[2] + (1 - locations_to_update_labels_mask) * gt_ymax
+    #         gt_xmax = locations_to_update_labels_mask * bbox[3] + (1 - locations_to_update_labels_mask) * gt_xmax
+
+    #         # update max_mask along the way
+    #         max_mask = tf.logical_or(max_mask, cur_max_indice_mask)
+
+    #         return [i+1, gt_labels, gt_scores,
+    #                 gt_ymin, gt_xmin, gt_ymax, gt_xmax, max_mask]
+    #     # Main loop definition.
+    #     # iterate betwween all ground_truth to encode anchors
+    #     i = 0
+    #     [i, gt_labels, gt_scores,
+    #      gt_ymin, gt_xmin,
+    #      gt_ymax, gt_xmax, max_mask] = tf.while_loop(condition, body,
+    #                                            [i, gt_labels, gt_scores,
+    #                                             gt_ymin, gt_xmin,
+    #                                             gt_ymax, gt_xmax, max_mask], parallel_iterations=16, back_prop=False, swap_memory=True)
+    #     # give -1 to the label of anchors those are outside image
+    #     inside_int_mask = tf.cast(inside_mask, tf.int64)
+    #     gt_labels =  (1 - inside_int_mask) * -1 + inside_int_mask * gt_labels
+    #     # transform to center / size for later regression target calculating
+    #     gt_cy = (gt_ymax + gt_ymin) / 2.
+    #     gt_cx = (gt_xmax + gt_xmin) / 2.
+    #     gt_h = gt_ymax - gt_ymin
+    #     gt_w = gt_xmax - gt_xmin
+    #     # get regression target for smooth_l1_loss
+    #     # the prior_scaling (in fact is 5 and 10) is use for balance the regression loss of center and with(or height)
+    #     # (x-x_ref)/x_ref * 10 + log(w/w_ref) * 5
+    #     gt_cy = (gt_cy - yref) / href / self._prior_scaling[0]
+    #     gt_cx = (gt_cx - xref) / wref / self._prior_scaling[1]
+    #     gt_h = tf.log(gt_h / href) / self._prior_scaling[2]
+    #     gt_w = tf.log(gt_w / wref) / self._prior_scaling[3]
+
+    #     # now gt_localizations is our regression object
+    #     return gt_labels, tf.stack([gt_cy, gt_cx, gt_h, gt_w], axis=-1), gt_scores
     def encode_all_anchors(self, labels, bboxes):
         self._labels = labels
         self._bboxes = bboxes
@@ -203,114 +314,26 @@ class AnchorEncoder(object):
             _labels = tf.boolean_mask(_labels, _labels > 0)
             #print(_labels)
 
-            ymin, xmin, ymax, xmax = _rois[:, 0], _rois[:, 1], _rois[:, 2], _rois[:, 3]
-            vol_anchors = (xmax - xmin) * (ymax - ymin)
-            # padding_maks = vol_anchors > 0
-            # _rois, ymin, xmin, ymax, xmax = tf.boolean_mask(_rois, padding_maks), tf.boolean_mask(ymin, padding_maks), tf.boolean_mask(xmin, padding_maks), tf.boolean_mask(ymax, padding_maks), tf.boolean_mask(xmax, padding_maks)
+            ymin_, xmin_, ymax_, xmax_ = _rois[:, 0], _rois[:, 1], _rois[:, 2], _rois[:, 3]
+
+            ymin, xmin, ymax, xmax = tf.reshape(ymin_, [-1]), tf.reshape(xmin_, [-1]), tf.reshape(ymax_, [-1]), tf.reshape(xmax_, [-1])
+            anchors_point = tf.stack([ymin, xmin, ymax, xmax], axis=-1)
 
             inside_mask = tf.logical_and(tf.logical_and(ymin >= -allowed_border*1., xmin >= -allowed_border*1.),
                                                                     tf.logical_and(ymax < (1. + allowed_border*1.), xmax < (1. + allowed_border*1.)))
-            # store every jaccard score while loop all ground truth, will update depends the score of anchor and current ground_truth
-            gt_labels = tf.zeros_like(ymin, dtype=tf.int64)
-            gt_scores = tf.zeros_like(ymin, dtype=tf.float32)
 
-            gt_ymin = tf.zeros_like(ymin, dtype=tf.float32)
-            gt_xmin = tf.zeros_like(ymin, dtype=tf.float32)
-            gt_ymax = tf.ones_like(ymin, dtype=tf.float32)
-            gt_xmax = tf.ones_like(ymin, dtype=tf.float32)
+            overlap_matrix = iou_matrix(_bboxes, anchors_point) * tf.cast(tf.expand_dims(inside_mask, 0), tf.float32)
 
-            max_mask = tf.cast(tf.zeros_like(ymin, dtype=tf.int32), tf.bool)
 
-            def safe_divide(numerator, denominator):
-                return tf.where(
-                    tf.greater(denominator, 0),
-                    tf.divide(numerator, denominator),
-                    tf.zeros_like(denominator))
+            matched_gt, gt_scores = do_dual_max_match(overlap_matrix, self._rpn_fg_thres, self._rpn_bg_high_thres)
 
-            def jaccard_with_anchors(bbox):
-                """Compute jaccard score between a box and the anchors.
-                """
-                # the inner square
-                inner_ymin = tf.maximum(ymin, bbox[0])
-                inner_xmin = tf.maximum(xmin, bbox[1])
-                inner_ymax = tf.minimum(ymax, bbox[2])
-                inner_xmax = tf.minimum(xmax, bbox[3])
-                h = tf.maximum(inner_ymax - inner_ymin, 0.)
-                w = tf.maximum(inner_xmax - inner_xmin, 0.)
+            matched_gt_mask = matched_gt > -1
+            matched_indices = tf.clip_by_value(matched_gt, 0, tf.int64.max)
 
-                inner_vol = h * w
-                union_vol = vol_anchors - inner_vol \
-                    + (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
-                jaccard = safe_divide(inner_vol, union_vol)
-                return jaccard
+            gt_ymin, gt_xmin, gt_ymax, gt_xmax = [tf.reshape(b, tf.shape(ymin_)) for b in tf.split(tf.gather(_bboxes, matched_indices), 4, axis=1)]
 
-            def condition(i, gt_labels, gt_scores,
-                          gt_ymin, gt_xmin, gt_ymax, gt_xmax, max_mask):
-                return tf.less(i, tf.shape(_labels)[0])
-
-            def body(i, gt_labels, gt_scores,
-                     gt_ymin, gt_xmin, gt_ymax, gt_xmax, max_mask):
-                """Body: update gture labels, scores and bboxes.
-                Follow the original SSD paper for that purpose:
-                  - assign values when jaccard > 0.5;
-                  - only update if beat the score of other bboxes.
-                """
-                # get i_th groud_truth(label && bbox)
-                label = _labels[i]
-                bbox = _bboxes[i]
-                # current ground_truth's overlap with all others' anchors
-                jaccard = tf.cast(inside_mask, tf.float32) * jaccard_with_anchors(bbox)
-                #jaccard = jaccard_with_anchors(bbox)
-                # the index of the max overlap for current ground_truth
-                max_jaccard = tf.reduce_max(jaccard)
-                cur_max_indice_mask = tf.equal(jaccard, max_jaccard)
-
-                # the locations where current overlap is higher than before
-                greater_than_current_mask = tf.greater(jaccard, gt_scores)
-                # we will update these locations as well as the current max_overlap location for this ground_truth
-                locations_to_update = tf.logical_or(greater_than_current_mask, cur_max_indice_mask)
-                # but we will ignore those locations where is the max_overlap for any ground_truth before
-                locations_to_update_with_mask = tf.logical_and(locations_to_update, tf.logical_not(max_mask))
-                # for current max_overlap
-                # for those current overlap is higher than before
-                # for those locations where is not the max_overlap for any before ground_truth
-                # update scores, so the terminal scores are either those max_overlap along the way or the max_overlap for any ground_truth
-                gt_scores = tf.where(locations_to_update_with_mask, jaccard, gt_scores)
-
-                # !!! because the difference of rules for score and label update !!!
-                # !!! so before we get the negtive examples we must use labels as positive mask first !!!
-                # for current max_overlap
-                # for current jaccard higher than before and higher than threshold (those scores are lower than is is ignored)
-                # for those locations where is not the max_overlap for any before ground_truth
-                # update labels, so the terminal labels are either those with max_overlap and higher than threshold along the way or the max_overlap for any ground_truth
-                locations_to_update_labels = tf.logical_and(tf.logical_or(tf.greater(tf.cast(greater_than_current_mask, tf.float32) * jaccard, self._rpn_fg_thres), cur_max_indice_mask), tf.logical_not(max_mask))
-                locations_to_update_labels_mask = tf.cast(tf.logical_and(locations_to_update_labels, label < self._num_classes), tf.float32)
-
-                gt_labels = tf.cast(locations_to_update_labels_mask, tf.int64) * label + (1 - tf.cast(locations_to_update_labels_mask, tf.int64)) * gt_labels
-                #gt_scores = tf.where(mask, jaccard, gt_scores)
-                # update ground truth for each anchors depends on the mask
-                gt_ymin = locations_to_update_labels_mask * bbox[0] + (1 - locations_to_update_labels_mask) * gt_ymin
-                gt_xmin = locations_to_update_labels_mask * bbox[1] + (1 - locations_to_update_labels_mask) * gt_xmin
-                gt_ymax = locations_to_update_labels_mask * bbox[2] + (1 - locations_to_update_labels_mask) * gt_ymax
-                gt_xmax = locations_to_update_labels_mask * bbox[3] + (1 - locations_to_update_labels_mask) * gt_xmax
-
-                # update max_mask along the way
-                max_mask = tf.logical_or(max_mask, cur_max_indice_mask)
-
-                return [i+1, gt_labels, gt_scores,
-                        gt_ymin, gt_xmin, gt_ymax, gt_xmax, max_mask]
-            # Main loop definition.
-            # iterate betwween all ground_truth to encode anchors
-            i = 0
-            [i, gt_labels, gt_scores,
-             gt_ymin, gt_xmin,
-             gt_ymax, gt_xmax, max_mask] = tf.while_loop(condition, body,
-                                                   [i, gt_labels, gt_scores,
-                                                    gt_ymin, gt_xmin,
-                                                    gt_ymax, gt_xmax, max_mask], parallel_iterations=16, back_prop=False, swap_memory=True)
-            # give -1 to the label of anchors those are outside image
-            inside_int_mask = tf.cast(inside_mask, tf.int64)
-            gt_labels =  (1 - inside_int_mask) * -1 + inside_int_mask * gt_labels
+            gt_labels = tf.gather(_labels, matched_indices)
+            gt_labels = gt_labels * tf.cast(matched_gt_mask, tf.int64) + (-1 * tf.cast(matched_gt < -1, tf.int64))
             # transform to center / size for later regression target calculating
             gt_cy = (gt_ymax + gt_ymin) / 2.
             gt_cx = (gt_xmax + gt_xmin) / 2.
@@ -328,7 +351,7 @@ class AnchorEncoder(object):
 
             #gt_cy = tf.Print(gt_cy, [gt_cy, gt_cx, gt_h, gt_w], message='gt_cy:')
             total_rois = tf.concat([_rois, _bboxes], axis = 0)
-            total_targets = tf.concat([tf.stack([gt_cy, gt_cx, gt_h, gt_w], axis=-1), tf.zeros_like(_bboxes, dtype=_bboxes.dtype)], axis = 0)
+            total_targets = tf.concat([tf.expand_dims(tf.reshape(tf.cast(matched_gt_mask, tf.float32), tf.shape(ymin_)), -1) * tf.stack([gt_cy, gt_cx, gt_h, gt_w], axis=-1), tf.zeros_like(_bboxes, dtype=_bboxes.dtype)], axis = 0)
 
             #_labels = tf.Print(_labels, [_labels], message='_labels:', summarize=1000)
 
@@ -360,7 +383,8 @@ class AnchorEncoder(object):
             fg_select_indices = tf.cond(n_positives < expected_num_fg_rois, lambda : positive_indices, lambda : tf.gather(positive_indices, downsample_impl(n_positives, expected_num_fg_rois)))
             # now the all rois taken as positive is min(n_positives, expected_num_fg_rois)
 
-            negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(tf.logical_or(positive_mask, total_labels < 0)), total_scores < self._rpn_bg_high_thres), total_scores > self._rpn_bg_low_thres)
+            #negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(tf.logical_or(positive_mask, total_labels < 0)), total_scores < self._rpn_bg_high_thres), total_scores > self._rpn_bg_low_thres)
+            negtive_mask = tf.logical_and(total_labels == 0, total_scores > self._rpn_bg_low_thres)
             negtive_indices = tf.squeeze(tf.where(negtive_mask), axis = -1)
             n_negtives = tf.shape(negtive_indices)[0]
 
@@ -376,6 +400,193 @@ class AnchorEncoder(object):
 
             #print(tf.gather(total_rois, final_keep_indices), tf.gather(total_targets, final_keep_indices), tf.gather(total_labels, final_keep_indices), tf.gather(total_scores, final_keep_indices))
             return tf.gather(total_rois, final_keep_indices), tf.gather(total_targets, final_keep_indices), tf.gather(total_labels, final_keep_indices), tf.gather(total_scores, final_keep_indices)
+        # def encode_impl(_rois, _labels, _bboxes):
+        #     '''encode along batch
+        #     '''
+        #     _bboxes = tf.boolean_mask(_bboxes, _labels > 0)
+        #     _labels = tf.boolean_mask(_labels, _labels > 0)
+        #     #print(_labels)
+
+        #     ymin, xmin, ymax, xmax = _rois[:, 0], _rois[:, 1], _rois[:, 2], _rois[:, 3]
+        #     vol_anchors = (xmax - xmin) * (ymax - ymin)
+        #     # padding_maks = vol_anchors > 0
+        #     # _rois, ymin, xmin, ymax, xmax = tf.boolean_mask(_rois, padding_maks), tf.boolean_mask(ymin, padding_maks), tf.boolean_mask(xmin, padding_maks), tf.boolean_mask(ymax, padding_maks), tf.boolean_mask(xmax, padding_maks)
+
+        #     inside_mask = tf.logical_and(tf.logical_and(ymin >= -allowed_border*1., xmin >= -allowed_border*1.),
+        #                                                             tf.logical_and(ymax < (1. + allowed_border*1.), xmax < (1. + allowed_border*1.)))
+        #     # store every jaccard score while loop all ground truth, will update depends the score of anchor and current ground_truth
+        #     gt_labels = tf.zeros_like(ymin, dtype=tf.int64)
+        #     gt_scores = tf.zeros_like(ymin, dtype=tf.float32)
+
+        #     gt_ymin = tf.zeros_like(ymin, dtype=tf.float32)
+        #     gt_xmin = tf.zeros_like(ymin, dtype=tf.float32)
+        #     gt_ymax = tf.ones_like(ymin, dtype=tf.float32)
+        #     gt_xmax = tf.ones_like(ymin, dtype=tf.float32)
+
+        #     max_mask = tf.cast(tf.zeros_like(ymin, dtype=tf.int32), tf.bool)
+
+        #     def safe_divide(numerator, denominator):
+        #         return tf.where(
+        #             tf.greater(denominator, 0),
+        #             tf.divide(numerator, denominator),
+        #             tf.zeros_like(denominator))
+
+        #     def jaccard_with_anchors(bbox):
+        #         """Compute jaccard score between a box and the anchors.
+        #         """
+        #         # the inner square
+        #         inner_ymin = tf.maximum(ymin, bbox[0])
+        #         inner_xmin = tf.maximum(xmin, bbox[1])
+        #         inner_ymax = tf.minimum(ymax, bbox[2])
+        #         inner_xmax = tf.minimum(xmax, bbox[3])
+        #         h = tf.maximum(inner_ymax - inner_ymin, 0.)
+        #         w = tf.maximum(inner_xmax - inner_xmin, 0.)
+
+        #         inner_vol = h * w
+        #         union_vol = vol_anchors - inner_vol \
+        #             + (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+        #         jaccard = safe_divide(inner_vol, union_vol)
+        #         return jaccard
+
+        #     def condition(i, gt_labels, gt_scores,
+        #                   gt_ymin, gt_xmin, gt_ymax, gt_xmax, max_mask):
+        #         return tf.less(i, tf.shape(_labels)[0])
+
+        #     def body(i, gt_labels, gt_scores,
+        #              gt_ymin, gt_xmin, gt_ymax, gt_xmax, max_mask):
+        #         """Body: update gture labels, scores and bboxes.
+        #         Follow the original SSD paper for that purpose:
+        #           - assign values when jaccard > 0.5;
+        #           - only update if beat the score of other bboxes.
+        #         """
+        #         # get i_th groud_truth(label && bbox)
+        #         label = _labels[i]
+        #         bbox = _bboxes[i]
+
+        #         # current ground_truth's overlap with all others' anchors
+        #         jaccard = tf.cast(inside_mask, tf.float32) * jaccard_with_anchors(bbox)
+        #         # the index of the max overlap for current ground_truth
+        #         max_jaccard = tf.maximum(tf.reduce_max(jaccard), ignore_threshold)
+        #         #max_jaccard = tf.Print(max_jaccard, [max_jaccard], message='max_jaccard: ', summarize=500)
+        #         all_cur_max_indice_mask = tf.equal(jaccard, max_jaccard)
+
+        #         choice_jaccard = tf.cast(all_cur_max_indice_mask, tf.float32) * jaccard * tf.random_uniform(tf.shape(all_cur_max_indice_mask), minval=1., maxval=10.)
+
+        #         max_choice_jaccard = tf.maximum(tf.reduce_max(choice_jaccard), ignore_threshold)
+        #         cur_max_indice_mask = tf.equal(choice_jaccard, max_choice_jaccard)
+
+        #         # the locations where current overlap is higher than before
+        #         greater_than_current_mask = tf.greater(jaccard, gt_scores)
+        #         # we will update these locations as well as the current max_overlap location for this ground_truth
+        #         locations_to_update = tf.logical_or(greater_than_current_mask, cur_max_indice_mask)
+        #         # but we will ignore those locations where is the max_overlap for any ground_truth before
+        #         locations_to_update_with_mask = tf.logical_and(locations_to_update, tf.logical_not(max_mask))
+        #         # for current max_overlap
+        #         # for those current overlap is higher than before
+        #         # for those locations where is not the max_overlap for any before ground_truth
+        #         # update scores, so the terminal scores are either those max_overlap along the way or the max_overlap for any ground_truth
+        #         gt_scores = tf.where(locations_to_update_with_mask, jaccard, gt_scores)
+
+        #         # !!! because the difference of rules for score and label update !!!
+        #         # !!! so before we get the negtive examples we must use labels as positive mask first !!!
+        #         # for current max_overlap
+        #         # for current jaccard higher than before and higher than threshold (those scores are lower than is is ignored)
+        #         # for those locations where is not the max_overlap for any before ground_truth
+        #         # update labels, so the terminal labels are either those with max_overlap and higher than threshold along the way or the max_overlap for any ground_truth
+        #         locations_to_update_labels = tf.logical_or(tf.greater(tf.cast(greater_than_current_mask, tf.float32) * jaccard, self._rpn_fg_thres), cur_max_indice_mask)
+        #         # locations_to_update_labels = tf.logical_and(tf.logical_or(tf.greater(tf.cast(greater_than_current_mask, tf.float32) * jaccard, self._rpn_fg_thres), cur_max_indice_mask), tf.logical_not(max_mask))
+        #         locations_to_update_labels_mask = tf.cast(tf.logical_and(locations_to_update_labels, label < self._num_classes), tf.float32)
+
+        #         gt_labels = tf.cast(locations_to_update_labels_mask, tf.int64) * label + (1 - tf.cast(locations_to_update_labels_mask, tf.int64)) * gt_labels
+        #         #gt_scores = tf.where(mask, jaccard, gt_scores)
+        #         # update ground truth for each anchors depends on the mask
+        #         gt_ymin = locations_to_update_labels_mask * bbox[0] + (1 - locations_to_update_labels_mask) * gt_ymin
+        #         gt_xmin = locations_to_update_labels_mask * bbox[1] + (1 - locations_to_update_labels_mask) * gt_xmin
+        #         gt_ymax = locations_to_update_labels_mask * bbox[2] + (1 - locations_to_update_labels_mask) * gt_ymax
+        #         gt_xmax = locations_to_update_labels_mask * bbox[3] + (1 - locations_to_update_labels_mask) * gt_xmax
+
+        #         # update max_mask along the way
+        #         max_mask = tf.logical_or(max_mask, cur_max_indice_mask)
+
+        #         return [i+1, gt_labels, gt_scores,
+        #                 gt_ymin, gt_xmin, gt_ymax, gt_xmax, max_mask]
+        #     # Main loop definition.
+        #     # iterate betwween all ground_truth to encode anchors
+        #     i = 0
+        #     [i, gt_labels, gt_scores,
+        #      gt_ymin, gt_xmin,
+        #      gt_ymax, gt_xmax, max_mask] = tf.while_loop(condition, body,
+        #                                            [i, gt_labels, gt_scores,
+        #                                             gt_ymin, gt_xmin,
+        #                                             gt_ymax, gt_xmax, max_mask], parallel_iterations=16, back_prop=False, swap_memory=True)
+        #     # give -1 to the label of anchors those are outside image
+        #     inside_int_mask = tf.cast(inside_mask, tf.int64)
+        #     gt_labels =  (1 - inside_int_mask) * -1 + inside_int_mask * gt_labels
+        #     # transform to center / size for later regression target calculating
+        #     gt_cy = (gt_ymax + gt_ymin) / 2.
+        #     gt_cx = (gt_xmax + gt_xmin) / 2.
+        #     gt_h = gt_ymax - gt_ymin
+        #     gt_w = gt_xmax - gt_xmin
+
+        #     #ymin = tf.Print(ymin, [ymin, xmin, ymax, xmax], message='ymin:')
+
+        #     yref, xref, href, wref = self.point2center(ymin, xmin, ymax, xmax)
+        #     # get regression target for smooth_l1_loss
+        #     gt_cy = (gt_cy - yref) / href / head_prior_scaling[0]
+        #     gt_cx = (gt_cx - xref) / wref / head_prior_scaling[1]
+        #     gt_h = tf.log(gt_h / href) / head_prior_scaling[2]
+        #     gt_w = tf.log(gt_w / wref) / head_prior_scaling[3]
+
+        #     #gt_cy = tf.Print(gt_cy, [gt_cy, gt_cx, gt_h, gt_w], message='gt_cy:')
+        #     total_rois = tf.concat([_rois, _bboxes], axis = 0)
+        #     total_targets = tf.concat([tf.stack([gt_cy, gt_cx, gt_h, gt_w], axis=-1), tf.zeros_like(_bboxes, dtype=_bboxes.dtype)], axis = 0)
+
+        #     #_labels = tf.Print(_labels, [_labels], message='_labels:', summarize=1000)
+
+        #     total_labels = tf.concat([gt_labels, _labels], axis = 0)
+        #     total_scores = tf.concat([gt_scores, tf.ones_like(_labels, dtype=gt_scores.dtype)], axis = 0)
+
+        #     def upsampel_impl(now_count, need_count):
+        #         # sample with replacement
+        #         left_count = need_count - now_count
+        #         select_indices = tf.random_shuffle(tf.range(now_count))[:tf.floormod(left_count, now_count)]
+        #         select_indices = tf.concat([tf.tile(tf.range(now_count), [tf.floor_div(left_count, now_count) + 1]), select_indices], axis = 0)
+
+        #         return select_indices
+        #     def downsample_impl(now_count, need_count):
+        #         # downsample with replacement
+        #         select_indices = tf.random_shuffle(tf.range(now_count))[:need_count]
+        #         return select_indices
+        #     #total_labels = tf.Print(total_labels, [total_labels], message='total_labels:', summarize=1000)
+
+        #     #total_labels = tf.Print(total_labels, [tf.shape(total_labels), tf.shape(total_scores)], message='Notice Here: both the label and scores must be one vector.')
+
+        #     positive_mask = total_labels > 0
+        #     positive_indices = tf.squeeze(tf.where(positive_mask), axis = -1)
+        #     n_positives = tf.shape(positive_indices)[0]
+
+        #     #n_positives = tf.Print(n_positives, [n_positives], message='n_positives:', summarize=1000)
+
+        #     # either downsample or take all
+        #     fg_select_indices = tf.cond(n_positives < expected_num_fg_rois, lambda : positive_indices, lambda : tf.gather(positive_indices, downsample_impl(n_positives, expected_num_fg_rois)))
+        #     # now the all rois taken as positive is min(n_positives, expected_num_fg_rois)
+
+        #     negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(tf.logical_or(positive_mask, total_labels < 0)), total_scores < self._rpn_bg_high_thres), total_scores > self._rpn_bg_low_thres)
+        #     negtive_indices = tf.squeeze(tf.where(negtive_mask), axis = -1)
+        #     n_negtives = tf.shape(negtive_indices)[0]
+
+        #     expected_num_bg_rois = rois_per_image - tf.minimum(n_positives, expected_num_fg_rois)
+        #     # either downsample or take all
+        #     bg_select_indices = tf.cond(n_negtives < expected_num_bg_rois, lambda : negtive_indices, lambda : tf.gather(negtive_indices, downsample_impl(n_negtives, expected_num_bg_rois)))
+        #     # now the all rois taken as positive is min(n_negtives, expected_num_bg_rois)
+
+        #     keep_indices = tf.concat([fg_select_indices, bg_select_indices], axis = 0)
+        #     n_keeps = tf.shape(keep_indices)[0]
+        #     # now n_keeps must be equal or less than rois_per_image
+        #     final_keep_indices = tf.cond(n_keeps < rois_per_image, lambda : tf.gather(keep_indices, upsampel_impl(n_keeps, rois_per_image)), lambda : keep_indices)
+
+        #     #print(tf.gather(total_rois, final_keep_indices), tf.gather(total_targets, final_keep_indices), tf.gather(total_labels, final_keep_indices), tf.gather(total_scores, final_keep_indices))
+        #     return tf.gather(total_rois, final_keep_indices), tf.gather(total_targets, final_keep_indices), tf.gather(total_labels, final_keep_indices), tf.gather(total_scores, final_keep_indices)
             # return tf.gather(total_rois, final_keep_indices), tf.gather(total_targets, final_keep_indices), tf.gather(total_labels, final_keep_indices), tf.gather(total_scores, final_keep_indices)
 
         #print(tf.map_fn(lambda  _rois_labels_bboxes: encode_impl(_rois_labels_bboxes[0], _rois_labels_bboxes[1], _rois_labels_bboxes[2]), (all_rois, all_labels, all_bboxes), dtype=(tf.float32, tf.float32, tf.int64, tf.float32)))

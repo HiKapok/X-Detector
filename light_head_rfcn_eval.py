@@ -98,7 +98,7 @@ tf.app.flags.DEFINE_integer(
 tf.app.flags.DEFINE_float(
     'fg_ratio', 0.25, 'fore-ground ratio in the total proposals.')
 tf.app.flags.DEFINE_float(
-    'match_threshold', 0.5, 'Matching threshold in the loss function for proposals.')
+    'match_threshold', 0.55, 'Matching threshold in the loss function for proposals.')
 tf.app.flags.DEFINE_float(
     'neg_threshold_high', 0.5, 'Matching threshold for the negtive examples in the loss function for proposals.')
 tf.app.flags.DEFINE_float(
@@ -182,7 +182,7 @@ def input_pipeline():
 
     anchor_creator = anchor_manipulator.AnchorCreator([FLAGS.train_image_size] * 2,
                                                     layers_shapes = [(30, 30)],
-                                                    anchor_scales = [[0.1, 0.25, 0.45, 0.65, 0.85]],
+                                                    anchor_scales = [[0.05, 0.1, 0.25, 0.45, 0.65, 0.85]],
                                                     extra_anchor_scales = [[]],
                                                     anchor_ratios = [[1., 2., .5]],
                                                     layer_steps = [16])
@@ -193,8 +193,12 @@ def input_pipeline():
         anchor_encoder_decoder = anchor_manipulator.AnchorEncoder(all_anchors,
                                         num_classes = FLAGS.num_classes,
                                         allowed_borders = [0.],
-                                        ignore_threshold = FLAGS.rpn_match_threshold, # only update labels for positive examples
-                                        prior_scaling=[0.1, 0.1, 0.2, 0.2])
+                                        positive_threshold = FLAGS.rpn_match_threshold,
+                                        ignore_threshold = FLAGS.rpn_neg_threshold,
+                                        prior_scaling=[1., 1., 1., 1.],#[0.1, 0.1, 0.2, 0.2],
+                                        rpn_fg_thres = FLAGS.match_threshold,
+                                        rpn_bg_high_thres = FLAGS.neg_threshold_high,
+                                        rpn_bg_low_thres = FLAGS.neg_threshold_low)
 
         num_readers_to_use = FLAGS.num_readers if FLAGS.run_on_cloud else 2
         num_preprocessing_threads_to_use = FLAGS.num_preprocessing_threads if FLAGS.run_on_cloud else 2

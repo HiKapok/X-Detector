@@ -18,10 +18,12 @@ from . import resnet_v2
 from utility import eval_helper
 
 USE_FUSED_BN = True
-BN_EPSILON = 0.001
+BN_EPSILON = 0.0001#0.001
 BN_MOMENTUM = 0.99
 
-initializer_to_use = lambda : tf.truncated_normal_initializer(mean=0.0, stddev=0.005)
+#initializer_to_use = tf.glorot_uniform_initializer
+initializer_to_use = tf.glorot_uniform_initializer
+conv_bn_initializer_to_use = lambda : tf.truncated_normal_initializer(mean=0.0, stddev=0.005)
 
 def get_shape(x, rank=None):
     if x.get_shape().is_fully_defined():
@@ -211,8 +213,8 @@ def relu_separable_bn_block(inputs, filters, name_prefix, is_training, data_form
                         strides=(1, 1), padding='same',
                         data_format=data_format,
                         activation=None, use_bias=False,
-                        depthwise_initializer=initializer_to_use(),
-                        pointwise_initializer=initializer_to_use(),
+                        depthwise_initializer=conv_bn_initializer_to_use(),
+                        pointwise_initializer=conv_bn_initializer_to_use(),
                         bias_initializer=tf.zeros_initializer(),
                         name=name_prefix, reuse=None)
     inputs = tf.layers.batch_normalization(inputs, momentum=BN_MOMENTUM, name=name_prefix + '_bn', axis=bn_axis,
@@ -228,7 +230,7 @@ def XceptionBody(input_image, num_classes, is_training = False, data_format='cha
     # (481-3+0*2)/2 + 1 = 240
     inputs = tf.layers.conv2d(input_image, 32, (3, 3), use_bias=False, name='block1_conv1', strides=(2, 2),
                 padding='valid', data_format=data_format, activation=None,
-                kernel_initializer=initializer_to_use(),
+                kernel_initializer=conv_bn_initializer_to_use(),
                 bias_initializer=tf.zeros_initializer())
     inputs = tf.layers.batch_normalization(inputs, momentum=BN_MOMENTUM, name='block1_conv1_bn', axis=bn_axis,
                             epsilon=BN_EPSILON, training=is_training, reuse=None, fused=USE_FUSED_BN)
@@ -237,7 +239,7 @@ def XceptionBody(input_image, num_classes, is_training = False, data_format='cha
     # (240-3+0*2)/1 + 1 = 238
     inputs = tf.layers.conv2d(inputs, 64, (3, 3), use_bias=False, name='block1_conv2', strides=(1, 1),
                 padding='valid', data_format=data_format, activation=None,
-                kernel_initializer=initializer_to_use(),
+                kernel_initializer=conv_bn_initializer_to_use(),
                 bias_initializer=tf.zeros_initializer())
     inputs = tf.layers.batch_normalization(inputs, momentum=BN_MOMENTUM, name='block1_conv2_bn', axis=bn_axis,
                             epsilon=BN_EPSILON, training=is_training, reuse=None, fused=USE_FUSED_BN)
@@ -246,7 +248,7 @@ def XceptionBody(input_image, num_classes, is_training = False, data_format='cha
     # (238-1+0*2)/2 + 1 = 119
     residual = tf.layers.conv2d(inputs, 128, (1, 1), use_bias=False, name='conv2d_1', strides=(2, 2),
                 padding='same', data_format=data_format, activation=None,
-                kernel_initializer=initializer_to_use(),
+                kernel_initializer=conv_bn_initializer_to_use(),
                 bias_initializer=tf.zeros_initializer())
     residual = tf.layers.batch_normalization(residual, momentum=BN_MOMENTUM, name='batch_normalization_1', axis=bn_axis,
                             epsilon=BN_EPSILON, training=is_training, reuse=None, fused=USE_FUSED_BN)
@@ -255,8 +257,8 @@ def XceptionBody(input_image, num_classes, is_training = False, data_format='cha
                         strides=(1, 1), padding='same',
                         data_format=data_format,
                         activation=None, use_bias=False,
-                        depthwise_initializer=initializer_to_use(),
-                        pointwise_initializer=initializer_to_use(),
+                        depthwise_initializer=conv_bn_initializer_to_use(),
+                        pointwise_initializer=conv_bn_initializer_to_use(),
                         bias_initializer=tf.zeros_initializer(),
                         name='block2_sepconv1', reuse=None)
     inputs = tf.layers.batch_normalization(inputs, momentum=BN_MOMENTUM, name='block2_sepconv1_bn', axis=bn_axis,
@@ -275,7 +277,7 @@ def XceptionBody(input_image, num_classes, is_training = False, data_format='cha
     # (119-1+0*2)/2 + 1 = 60
     residual = tf.layers.conv2d(inputs, 256, (1, 1), use_bias=False, name='conv2d_2', strides=(2, 2),
                 padding='same', data_format=data_format, activation=None,
-                kernel_initializer=initializer_to_use(),
+                kernel_initializer=conv_bn_initializer_to_use(),
                 bias_initializer=tf.zeros_initializer())
     residual = tf.layers.batch_normalization(residual, momentum=BN_MOMENTUM, name='batch_normalization_2', axis=bn_axis,
                             epsilon=BN_EPSILON, training=is_training, reuse=None, fused=USE_FUSED_BN)
@@ -293,7 +295,7 @@ def XceptionBody(input_image, num_classes, is_training = False, data_format='cha
     # (119-1+0*2)/2 + 1 = 30
     residual = tf.layers.conv2d(inputs, 728, (1, 1), use_bias=False, name='conv2d_3', strides=(2, 2),
                 padding='same', data_format=data_format, activation=None,
-                kernel_initializer=initializer_to_use(),
+                kernel_initializer=conv_bn_initializer_to_use(),
                 bias_initializer=tf.zeros_initializer())
     residual = tf.layers.batch_normalization(residual, momentum=BN_MOMENTUM, name='batch_normalization_3', axis=bn_axis,
                             epsilon=BN_EPSILON, training=is_training, reuse=None, fused=USE_FUSED_BN)
@@ -322,7 +324,7 @@ def XceptionBody(input_image, num_classes, is_training = False, data_format='cha
     # remove stride 2 for the residual connection
     residual = tf.layers.conv2d(inputs, 1024, (1, 1), use_bias=False, name='conv2d_4', strides=(1, 1),
                 padding='same', data_format=data_format, activation=None,
-                kernel_initializer=initializer_to_use(),
+                kernel_initializer=conv_bn_initializer_to_use(),
                 bias_initializer=tf.zeros_initializer())
     residual = tf.layers.batch_normalization(residual, momentum=BN_MOMENTUM, name='batch_normalization_4', axis=bn_axis,
                             epsilon=BN_EPSILON, training=is_training, reuse=None, fused=USE_FUSED_BN)
@@ -336,8 +338,8 @@ def XceptionBody(input_image, num_classes, is_training = False, data_format='cha
                         strides=(1, 1), dilation_rate=(2, 2), padding='same',
                         data_format=data_format,
                         activation=None, use_bias=False,
-                        depthwise_initializer=initializer_to_use(),
-                        pointwise_initializer=initializer_to_use(),
+                        depthwise_initializer=conv_bn_initializer_to_use(),
+                        pointwise_initializer=conv_bn_initializer_to_use(),
                         bias_initializer=tf.zeros_initializer(),
                         name='block14_sepconv1', reuse=None)
     inputs = tf.layers.batch_normalization(inputs, momentum=BN_MOMENTUM, name='block14_sepconv1_bn', axis=bn_axis,
@@ -348,8 +350,8 @@ def XceptionBody(input_image, num_classes, is_training = False, data_format='cha
                         strides=(1, 1), dilation_rate=(2, 2), padding='same',
                         data_format=data_format,
                         activation=None, use_bias=False,
-                        depthwise_initializer=initializer_to_use(),
-                        pointwise_initializer=initializer_to_use(),
+                        depthwise_initializer=conv_bn_initializer_to_use(),
+                        pointwise_initializer=conv_bn_initializer_to_use(),
                         bias_initializer=tf.zeros_initializer(),
                         name='block14_sepconv2', reuse=None)
     inputs = tf.layers.batch_normalization(inputs, momentum=BN_MOMENTUM, name='block14_sepconv2_bn', axis=bn_axis,
@@ -436,7 +438,7 @@ def large_sep_kernel(net_input, depth_mid, depth_output, is_training, data_forma
                                   data_format=data_format)
       branch_0b = tf.layers.conv2d(inputs=branch_0a, filters=depth_output, kernel_size=(1, 15), strides=1,
                                   padding='SAME', use_bias=True, activation=None,
-                                  kernel_initializer=initializer_to_use(),
+                                  kernel_initializer=conv_bn_initializer_to_use(),
                                   bias_initializer=tf.zeros_initializer(),
                                   data_format=data_format)
     with tf.variable_scope('Branch_1'):
@@ -447,7 +449,7 @@ def large_sep_kernel(net_input, depth_mid, depth_output, is_training, data_forma
                                   data_format=data_format)
       branch_1b = tf.layers.conv2d(inputs=branch_1a, filters=depth_output, kernel_size=(1, 15), strides=1,
                                   padding='SAME', use_bias=True, activation=None,
-                                  kernel_initializer=initializer_to_use(),
+                                  kernel_initializer=conv_bn_initializer_to_use(),
                                   bias_initializer=tf.zeros_initializer(),
                                   data_format=data_format)
 

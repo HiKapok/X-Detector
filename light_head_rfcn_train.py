@@ -100,7 +100,7 @@ tf.app.flags.DEFINE_float(
 tf.app.flags.DEFINE_float(
     'fg_ratio', 0.25, 'fore-ground ratio in the total proposals.')
 tf.app.flags.DEFINE_float(
-    'match_threshold', 0.5, 'Matching threshold in the loss function for proposals.')
+    'match_threshold', 0.55, 'Matching threshold in the loss function for proposals.')
 tf.app.flags.DEFINE_float(
     'neg_threshold_high', 0.5, 'Matching threshold for the negtive examples in the loss function for proposals.')
 tf.app.flags.DEFINE_float(
@@ -205,7 +205,7 @@ def input_pipeline():
 
     anchor_creator = anchor_manipulator.AnchorCreator([FLAGS.train_image_size] * 2,
                                                     layers_shapes = [(30, 30)],
-                                                    anchor_scales = [[0.1, 0.25, 0.45, 0.65, 0.85]],
+                                                    anchor_scales = [[0.05, 0.1, 0.25, 0.45, 0.65, 0.85]],
                                                     extra_anchor_scales = [[]],
                                                     anchor_ratios = [[1., 2., .5]],
                                                     layer_steps = [16])
@@ -216,8 +216,12 @@ def input_pipeline():
         anchor_encoder_decoder = anchor_manipulator.AnchorEncoder(all_anchors,
                                         num_classes = FLAGS.num_classes,
                                         allowed_borders = [0.],
-                                        ignore_threshold = FLAGS.rpn_match_threshold, # only update labels for positive examples
-                                        prior_scaling=[0.1, 0.1, 0.2, 0.2])
+                                        positive_threshold = FLAGS.rpn_match_threshold,
+                                        ignore_threshold = FLAGS.rpn_neg_threshold,
+                                        prior_scaling=[1., 1., 1., 1.],#[0.1, 0.1, 0.2, 0.2],
+                                        rpn_fg_thres = FLAGS.match_threshold,
+                                        rpn_bg_high_thres = FLAGS.neg_threshold_high,
+                                        rpn_bg_low_thres = FLAGS.neg_threshold_low)
         list_from_batch, _ = dataset_factory.get_dataset(FLAGS.dataset_name,
                                                 FLAGS.dataset_split_name,
                                                 FLAGS.data_dir,
@@ -319,7 +323,8 @@ def lighr_head_model_fn(features, labels, mode, params):
             fg_select_indices = tf.cond(n_positives < expected_num_fg_rois, lambda : positive_indices, lambda : tf.gather(positive_indices, downsample_impl(n_positives, expected_num_fg_rois)))
             # now the all rois taken as positive is min(n_positives, expected_num_fg_rois)
 
-            negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(tf.logical_or(positive_mask, glabels < 0)), gscores < params['rpn_neg_threshold']), gscores > 0.)
+            #negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(tf.logical_or(positive_mask, glabels < 0)), gscores < params['rpn_neg_threshold']), gscores > 0.)
+            negtive_mask = tf.logical_and(glabels==0, gscores > 0.)
             negtive_indices = tf.squeeze(tf.where(negtive_mask), axis = -1)
             n_negtives = tf.shape(negtive_indices)[0]
 
@@ -397,7 +402,7 @@ def lighr_head_model_fn(features, labels, mode, params):
 
     # Add weight decay to the loss. We exclude the batch norm variables because
     # doing so leads to a small improvement in accuracy.
-    loss = 10 * rpn_cross_entropy + rpn_loc_loss + head_loss + params['weight_decay'] * tf.add_n(
+    loss = 5 * rpn_cross_entropy + rpn_loc_loss + head_loss + params['weight_decay'] * tf.add_n(
       [tf.nn.l2_loss(v) for v in tf.trainable_variables()
        if 'batch_normalization' not in v.name])
     total_loss = tf.identity(loss, name='total_loss')

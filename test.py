@@ -1,28 +1,97 @@
 
 import tensorflow as tf
+
 import numpy as np
 sess = tf.Session()
 
 
-elems = np.array([[1,2], [2,3], [3,4]])
-alternates = tf.map_fn(lambda x: [x[0][0],x[1][1]], [elems,elems])
-print(sess.run(alternates))
-scores = tf.constant([11,12,13,14,15])
-labels = tf.constant([[111,12,13,14,15], [211,12,13,14,15], [311,12,13,14,15], [411,12,13,14,15],[511,12,13,14,15]])
-
-num_bboxes = tf.shape(scores)[0]
-
-left_count = 8 - num_bboxes
+t1 = tf.constant([113,114,13,214,111,16])
+t2 = tf.constant([111,112,113,114,115])
+a=tf.expand_dims(t1,0)+tf.expand_dims(t2,1)
 
 
-print(sess.run([tf.gather(labels, [1,2,3], axis=1)]))
+bboxes = tf.constant([[0.1,0.2,0.3,0.4], [0.1,0.25,0.3,0.4], [0.15,0.2,0.3,0.4], [0.15,0.28,0.32,0.49]])
+gt_bboxes = tf.constant([[0.12,0.22,0.33,0.44], [0.14,0.2,0.35,0.4], [0.1,0.32,0.3,0.54]])
 
-select_indices = tf.random_shuffle(tf.range(num_bboxes))[:tf.floormod(left_count, num_bboxes)]
 
-select_indices = tf.concat([tf.tile(tf.range(num_bboxes), [tf.floor_div(left_count, num_bboxes) + 1]), select_indices], axis = 0)
-print(sess.run([tf.gather(scores, select_indices), tf.gather(labels, select_indices)]))
+from tensorflow.contrib.image.python.ops import image_ops
 
-print(sess.run(tf.where([[True],[False],[True],[True],[False],[False]])))
+def areas(bboxes):
+    ymin, xmin, ymax, xmax = tf.split(bboxes, 4, axis=1)
+    return (xmax - xmin) * (ymax - ymin)
+def intersection(bboxes, gt_bboxes):
+    ymin, xmin, ymax, xmax = tf.split(bboxes, 4, axis=1)
+    gt_ymin, gt_xmin, gt_ymax, gt_xmax = [tf.transpose(b, perm=[1, 0]) for b in tf.split(gt_bboxes, 4, axis=1)]
+
+    int_ymin = tf.maximum(ymin, gt_ymin)
+    int_xmin = tf.maximum(xmin, gt_xmin)
+    int_ymax = tf.minimum(ymax, gt_ymax)
+    int_xmax = tf.minimum(xmax, gt_xmax)
+    h = tf.maximum(int_ymax - int_ymin, 0.)
+    w = tf.maximum(int_xmax - int_xmin, 0.)
+
+    return h * w
+def iou_matrix(bboxes, gt_bboxes):
+    inter_vol = intersection(bboxes, gt_bboxes)
+    union_vol = areas(bboxes) + tf.transpose(areas(gt_bboxes), perm=[1, 0]) - inter_vol
+
+    return tf.where(tf.equal(inter_vol, 0.0),
+                    tf.zeros_like(inter_vol), tf.truediv(inter_vol, union_vol))
+
+def do_dual_max_match(overlap_matrix, high_thres, low_thres, ignore_between = True):
+    '''
+    overlap_matrix: num_gt * num_anchors
+    '''
+    anchors_to_gt = tf.argmax(overlap_matrix, axis=0)
+    match_values = tf.reduce_max(overlap_matrix, axis=0)
+
+    positive_mask = tf.greater_equal(match_values, high_thres)
+    less_mask = tf.less(match_values, low_thres)
+    between_mask = tf.logical_and(tf.less(match_values, high_thres), tf.greater_equal(match_values, low_thres))
+    negative_mask = less_mask if ignore_between else between_mask
+    ignore_mask = between_mask if ignore_between else less_mask
+
+    match_indices = tf.where(negative_mask, -1 * tf.ones_like(anchors_to_gt), anchors_to_gt)
+    match_indices = tf.where(ignore_mask, -2 * tf.ones_like(match_indices), match_indices)
+
+    anchors_to_gt_mask = tf.one_hot(tf.clip_by_value(match_indices, -1, tf.cast(tf.shape(overlap_matrix)[0], tf.int64)), tf.shape(overlap_matrix)[0], on_value=1, off_value=0, axis=0, dtype=tf.int32)
+
+    gt_to_anchors = tf.argmax(overlap_matrix, axis=1)
+
+    left_gt_to_anchors_mask = tf.cast(tf.logical_and(tf.reduce_max(anchors_to_gt_mask, axis=1, keep_dims=True) < 1, tf.one_hot(gt_to_anchors, tf.shape(overlap_matrix)[1], on_value=True, off_value=False, axis=1, dtype=tf.bool)), tf.int64)
+
+    selected_scores = tf.gather_nd(overlap_matrix, tf.stack([tf.where(tf.reduce_max(left_gt_to_anchors_mask, axis=0) > 0, tf.argmax(left_gt_to_anchors_mask, axis=0), anchors_to_gt), tf.range(tf.cast(tf.shape(overlap_matrix)[1], tf.int64))], axis=1))
+    return tf.where(tf.reduce_max(left_gt_to_anchors_mask, axis=0) > 0, tf.argmax(left_gt_to_anchors_mask, axis=0), match_indices)
+
+print(sess.run([tf.transpose(areas(gt_bboxes), perm=[1, 0])]))
+print(sess.run([tf.maximum(tf.expand_dims(t1,0),tf.expand_dims(t2,1))]))
+print(sess.run([do_dual_max_match(iou_matrix(gt_bboxes, bboxes), 0.65, 0.6)]))
+print(sess.run([image_ops.bipartite_match(iou_matrix(gt_bboxes, bboxes), -1)]))
+
+
+gt_bboxes1 = tf.constant([[0.12,0.22,0.33,0.44], [0.14,0.2,0.35,0.4], [0.1,0.32,0.3,0.54]])
+gt_bboxes2 = tf.constant([[2,1,0,3.]])
+print(sess.run(gt_bboxes1 * tf.expand_dims(gt_bboxes2,0)))
+
+# elems = np.array([[1,2], [2,3], [3,4]])
+# alternates = tf.map_fn(lambda x: [x[0][0],x[1][1]], [elems,elems])
+# print(sess.run(alternates))
+# scores = tf.constant([11,12,13,14,15])
+# labels = tf.constant([[111,12,13,14,15], [211,12,13,14,15], [311,12,13,14,15], [411,12,13,14,15],[511,12,13,14,15]])
+
+# num_bboxes = tf.shape(scores)[0]
+
+# left_count = 8 - num_bboxes
+
+
+# print(sess.run([tf.gather(labels, [1,2,3], axis=1)]))
+
+# select_indices = tf.random_shuffle(tf.range(num_bboxes))[:tf.floormod(left_count, num_bboxes)]
+
+# select_indices = tf.concat([tf.tile(tf.range(num_bboxes), [tf.floor_div(left_count, num_bboxes) + 1]), select_indices], axis = 0)
+# print(sess.run([tf.gather(scores, select_indices), tf.gather(labels, select_indices)]))
+
+# print(sess.run(tf.where([[True],[False],[True],[True],[False],[False]])))
 
 # from __future__ import absolute_import
 # from __future__ import division

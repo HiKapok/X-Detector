@@ -86,7 +86,7 @@ tf.app.flags.DEFINE_string(
 tf.app.flags.DEFINE_float(
     'negative_ratio', 3., 'Negative ratio in the loss function.')
 tf.app.flags.DEFINE_float(
-    'match_threshold', 0.7, 'Matching threshold in the loss function.')
+    'match_threshold', 0.6, 'Matching threshold in the loss function.')
 tf.app.flags.DEFINE_float(
     'neg_threshold', 0.4, 'Matching threshold for the negtive examples in the loss function.')
 # optimizer related configuration
@@ -143,7 +143,7 @@ def input_pipeline():
 
     anchor_creator = anchor_manipulator.AnchorCreator([FLAGS.train_image_size] * 2,
                                                     layers_shapes = [(22, 22)],
-                                                    anchor_scales = [[0.05, 0.1, 0.25, 0.4, 0.55, 0.7, 0.85]],
+                                                    anchor_scales = [[0.05, 0.1, 0.2, 0.3, 0.4, 0.55, 0.7, 0.85]],
                                                     extra_anchor_scales = [[]],
                                                     anchor_ratios = [[1., 2., 3., .5, 0.3333]],
                                                     layer_steps = [16])
@@ -154,7 +154,8 @@ def input_pipeline():
         anchor_encoder_decoder = anchor_manipulator.AnchorEncoder(all_anchors,
                                         num_classes = FLAGS.num_classes,
                                         allowed_borders = [0.],
-                                        ignore_threshold = FLAGS.match_threshold, # only update labels for positive examples
+                                        positive_threshold = FLAGS.match_threshold,
+                                        ignore_threshold = FLAGS.neg_threshold,
                                         prior_scaling=[0.1, 0.1, 0.2, 0.2])
         list_from_batch, _ = dataset_factory.get_dataset(FLAGS.dataset_name,
                                                 FLAGS.dataset_split_name,
@@ -228,7 +229,8 @@ def xdet_model_fn(features, labels, mode, params):
     n_positives = tf.reduce_sum(fpositive_mask)
     # negtive examples are those max_overlap is still lower than neg_threshold, note that some positive may also has lower jaccard
     # note those gscores is 0 is either be ignored during anchors encode or anchors have 0 overlap with all ground truth
-    negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(tf.logical_or(positive_mask, glabels < 0)), gscores < params['neg_threshold']), gscores > 0.)
+    #negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(tf.logical_or(positive_mask, glabels < 0)), gscores < params['neg_threshold']), gscores > 0.)
+    negtive_mask = tf.logical_and(glabels==0, gscores > 0.)
     #negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(positive_mask), gscores < params['neg_threshold']), gscores > 0.)
     #negtive_mask = tf.logical_and(gscores < params['neg_threshold'], tf.logical_not(positive_mask))
     fnegtive_mask = tf.cast(negtive_mask, tf.float32)

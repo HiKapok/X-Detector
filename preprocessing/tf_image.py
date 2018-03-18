@@ -561,8 +561,8 @@ def ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.1, 0.3, 0.5, 0.
         center_x, center_y = (bboxes[:, 1] + bboxes[:, 3]) / 2, (bboxes[:, 0] + bboxes[:, 2]) / 2
 
         def condition(index, roi, mask):
-            #return tf.logical_or(tf.logical_and(tf.reduce_sum(tf.cast(mask, tf.int32)) < 1, tf.less(index, max_attempt)), tf.less(index, 1))
-            return tf.reduce_sum(tf.cast(mask, tf.int32)) < 1
+            return tf.logical_or(tf.logical_and(tf.reduce_sum(tf.cast(mask, tf.int32)) < 1, tf.less(index, max_attempt)), tf.less(index, 1))
+            #return tf.reduce_sum(tf.cast(mask, tf.int32)) < 1
 
         def body(index, roi, mask):
             sampled_width, sampled_height = sample_width_height(float_width, float_height)
@@ -602,7 +602,8 @@ def ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.1, 0.3, 0.5, 0.
 
         # return tf.cast([roi[0]*tf.cast(height, tf.float32), roi[1]*tf.cast(width, tf.float32), (roi[2]-roi[0])*tf.cast(height, tf.float32), (roi[3]-roi[1])*tf.cast(width, tf.float32)], tf.int32), mask_labels, mask_bboxes
         # if we reach max_attempt then return no sample is done
-        return control_flow_ops.cond(tf.less(index, max_attempt), lambda : (tf.cast([roi[0]*tf.cast(height, tf.float32), roi[1]*tf.cast(width, tf.float32), (roi[2]-roi[0])*tf.cast(height, tf.float32), (roi[3]-roi[1])*tf.cast(width, tf.float32)], tf.int32), mask_labels, mask_bboxes), lambda : (tf.cast([0, 0, height, width], tf.int32), labels, bboxes))
+        #return control_flow_ops.cond(tf.less(index, max_attempt), lambda : (tf.cast([roi[0]*tf.cast(height, tf.float32), roi[1]*tf.cast(width, tf.float32), (roi[2]-roi[0])*tf.cast(height, tf.float32), (roi[3]-roi[1])*tf.cast(width, tf.float32)], tf.int32), mask_labels, mask_bboxes), lambda : (tf.cast([0, 0, height, width], tf.int32), labels, bboxes))
+        return control_flow_ops.cond(tf.greater(tf.shape(mask_labels)[0], 0), lambda : (tf.cast([roi[0]*tf.cast(height, tf.float32), roi[1]*tf.cast(width, tf.float32), (roi[2]-roi[0])*tf.cast(height, tf.float32), (roi[3]-roi[1])*tf.cast(width, tf.float32)], tf.int32), mask_labels, mask_bboxes), lambda : (tf.cast([0, 0, height, width], tf.int32), labels, bboxes))
 
 
     def sample_patch(image, labels, bboxes, min_iou):

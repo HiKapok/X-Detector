@@ -1,7 +1,7 @@
 # X-Detector
 X-Detector is a collection of several object detection algorithms. And some of those have not appeared in any academic papers.
 
-Up to now, this repository contains code of the re-implementent of [Light-Head R-CNN](https://arxiv.org/abs/1711.07264) and the training process is still going on. While several other detectors(named X-Det now) are also included, the main idea behind X-Det is to introduce explicit attention mechanisms between feature map channels, so I would like to change its name to "ABC (**A**ttention **B**etween **C**hannels)" later when the performance get to 0.7+mAP on PASCAL VOC 2007 Test Dataset (now only ~0.56mAP was achieved).
+Up to now, this repository contains code of the re-implementent of [Light-Head R-CNN](https://arxiv.org/abs/1711.07264) and the training process is still going on. While several other detectors(named X-Det now) are also included, the main idea behind X-Det is to introduce explicit attention mechanisms between feature map channels, so I would like to change its name to "ABCD (**A**ttention **B**etween **C**hannels **D**etector)" later when the performance get to 0.7+mAP on PASCAL VOC 2007 Test Dataset (now only ~0.56mAP was achieved, BTW, one fatal bug has been fixed and training is in process).
 
 The pre-trained weight of backbone network can be found in [Resnet-50 backbone](https://github.com/tensorflow/models/tree/master/official/resnet) and [Xception backbone](https://github.com/HiKapok/Xception_Tensorflow). The latest version of PsRoIAlign is [here](https://github.com/HiKapok/PSROIAlign).
 
