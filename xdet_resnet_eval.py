@@ -360,7 +360,7 @@ def xdet_model_fn(features, labels, mode, params):
     # negtive examples are those max_overlap is still lower than neg_threshold, note that some positive may also has lower jaccard
     # note those gscores is 0 is either be ignored during anchors encode or anchors have 0 overlap with all ground truth
     #negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(tf.logical_or(positive_mask, glabels < 0)), gscores < params['neg_threshold']), gscores > 0.)
-    negtive_mask = tf.logical_and(glabels==0, gscores > 0.)
+    negtive_mask = tf.logical_and(tf.equal(glabels, 0), gscores > 0.)
     #negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(positive_mask), gscores < params['neg_threshold']), gscores > 0.)
     #negtive_mask = tf.logical_and(gscores < params['neg_threshold'], tf.logical_not(positive_mask))
     fnegtive_mask = tf.cast(negtive_mask, tf.float32)

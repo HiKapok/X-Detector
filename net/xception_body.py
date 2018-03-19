@@ -22,8 +22,8 @@ BN_EPSILON = 0.0001#0.001
 BN_MOMENTUM = 0.99
 
 #initializer_to_use = tf.glorot_uniform_initializer
-initializer_to_use = tf.glorot_uniform_initializer
-conv_bn_initializer_to_use = lambda : tf.truncated_normal_initializer(mean=0.0, stddev=0.005)
+initializer_to_use = tf.glorot_normal_initializer
+conv_bn_initializer_to_use = tf.glorot_normal_initializer#lambda : tf.truncated_normal_initializer(mean=0.0, stddev=0.005)
 
 def get_shape(x, rank=None):
     if x.get_shape().is_fully_defined():

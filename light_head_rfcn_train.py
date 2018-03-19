@@ -108,9 +108,9 @@ tf.app.flags.DEFINE_float(
 tf.app.flags.DEFINE_integer(
     'rpn_anchors_per_image', 256, 'total rpn anchors to calculate loss and backprop.')
 tf.app.flags.DEFINE_integer(
-    'rpn_pre_nms_top_n', 8000, 'selected numbers of proposals to nms.')
+    'rpn_pre_nms_top_n', 9000, 'selected numbers of proposals to nms.')
 tf.app.flags.DEFINE_integer(
-    'rpn_post_nms_top_n', 1200, 'keep numbers of proposals after nms.')
+    'rpn_post_nms_top_n', 1600, 'keep numbers of proposals after nms.')
 tf.app.flags.DEFINE_float(
     'rpn_min_size', 16*1./480, 'minsize threshold of proposals to be filtered for rpn.')
 tf.app.flags.DEFINE_float(
@@ -324,7 +324,7 @@ def lighr_head_model_fn(features, labels, mode, params):
             # now the all rois taken as positive is min(n_positives, expected_num_fg_rois)
 
             #negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(tf.logical_or(positive_mask, glabels < 0)), gscores < params['rpn_neg_threshold']), gscores > 0.)
-            negtive_mask = tf.logical_and(glabels==0, gscores > 0.)
+            negtive_mask = tf.logical_and(tf.equal(glabels, 0), gscores > 0.)
             negtive_indices = tf.squeeze(tf.where(negtive_mask), axis = -1)
             n_negtives = tf.shape(negtive_indices)[0]
 
@@ -355,7 +355,7 @@ def lighr_head_model_fn(features, labels, mode, params):
         #gtargets = tf.Print(gtargets, [gtargets], message='gtargets:', summarize=100)
 
         rpn_l1_distance = modified_smooth_l1(location_pred, gtargets, sigma=1.)
-        rpn_loc_loss = tf.reduce_mean(tf.reduce_sum(rpn_l1_distance, axis=-1))
+        rpn_loc_loss = tf.reduce_mean(tf.reduce_sum(rpn_l1_distance, axis=-1)) * params['rpn_fg_ratio']
         rpn_loc_loss = tf.identity(rpn_loc_loss, name='rpn_location_loss')
         tf.summary.scalar('rpn_location_loss', rpn_loc_loss)
         tf.losses.add_loss(rpn_loc_loss)
@@ -383,11 +383,11 @@ def lighr_head_model_fn(features, labels, mode, params):
                 head_cross_entropy_loss = tf.identity(head_cross_entropy_loss, name='head_cross_entropy_loss')
                 tf.summary.scalar('head_cross_entropy_loss', head_cross_entropy_loss)
 
-                head_location_loss = tf.reduce_mean(head_loc_loss)/params['fg_ratio']
+                head_location_loss = tf.reduce_mean(head_loc_loss)#/params['fg_ratio']
                 head_location_loss = tf.identity(head_location_loss, name='head_location_loss')
                 tf.summary.scalar('head_location_loss', head_location_loss)
 
-            return head_cross_entropy + head_loc_loss/params['fg_ratio']
+            return head_cross_entropy + head_loc_loss#/params['fg_ratio']
 
         head_loss = xception_body.get_head(large_sep_feature, lambda input_, bboxes_, grid_width_, grid_height_ : ps_roi_align(input_, bboxes_, grid_width_, grid_height_, pool_method), 7, 7, lambda cls, bbox, indices : head_loss_func(cls, bbox, indices, proposals_targets, proposals_labels), proposals_bboxes, params['num_classes'], (mode == tf.estimator.ModeKeys.TRAIN), params['using_ohem'], params['ohem_roi_one_image'], params['data_format'], 'final_head')
 
@@ -402,7 +402,7 @@ def lighr_head_model_fn(features, labels, mode, params):
 
     # Add weight decay to the loss. We exclude the batch norm variables because
     # doing so leads to a small improvement in accuracy.
-    loss = 5 * rpn_cross_entropy + rpn_loc_loss + head_loss + params['weight_decay'] * tf.add_n(
+    loss = rpn_cross_entropy + rpn_loc_loss + head_loss + params['weight_decay'] * tf.add_n(
       [tf.nn.l2_loss(v) for v in tf.trainable_variables()
        if 'batch_normalization' not in v.name])
     total_loss = tf.identity(loss, name='total_loss')
@@ -492,13 +492,13 @@ def main(_):
 
 
     tensors_to_log = {
-        'learning_rate': 'learning_rate',
-        'rpn_cross_entropy_loss': 'xception_lighthead/rpn_cross_entropy_loss',
-        'rpn_location_loss': 'xception_lighthead/rpn_location_loss',
+        'lr': 'learning_rate',
+        'rpn_ce_loss': 'xception_lighthead/rpn_cross_entropy_loss',
+        'rpn_loc_loss': 'xception_lighthead/rpn_location_loss',
         'rpn_loss': 'xception_lighthead/rpn_loss',
         'head_loss': 'xception_lighthead/head_loss',
-        'head_cross_entropy_loss': 'xception_lighthead/final_head/head_cross_entropy_loss',
-        'head_location_loss': 'xception_lighthead/final_head/head_location_loss',
+        'head_ce_loss': 'xception_lighthead/final_head/head_cross_entropy_loss',
+        'head_loc_loss': 'xception_lighthead/final_head/head_location_loss',
         'total_loss': 'total_loss',
     }
 
@@ -514,3 +514,40 @@ def main(_):
 if __name__ == '__main__':
   tf.logging.set_verbosity(tf.logging.INFO)
   tf.app.run()
+
+# Epoch[0] Batch [100]    Speed: 3.37 samples/sec Train-RPNAcc=0.896658,  RPNLogLoss=0.335296, RPNL1Loss=0.064354,    RCNNAcc=0.387995,   RCNNLogLoss=1.381760,   RCNNL1Loss=0.195688,
+# Epoch[0] Batch [200]    Speed: 3.32 samples/sec Train-RPNAcc=0.926617,  RPNLogLoss=0.247772, RPNL1Loss=0.059578,    RCNNAcc=0.637477,   RCNNLogLoss=1.363275,   RCNNL1Loss=0.218161,
+# Epoch[0] Batch [300]    Speed: 3.36 samples/sec Train-RPNAcc=0.936566,  RPNLogLoss=0.212495, RPNL1Loss=0.059787,    RCNNAcc=0.722254,   RCNNLogLoss=1.340625,   RCNNL1Loss=0.230750,
+# Epoch[0] Batch [400]    Speed: 3.33 samples/sec Train-RPNAcc=0.943988,  RPNLogLoss=0.188992, RPNL1Loss=0.059758,    RCNNAcc=0.765644,   RCNNLogLoss=1.286642,   RCNNL1Loss=0.233597,
+# Epoch[0] Batch [500]    Speed: 3.30 samples/sec Train-RPNAcc=0.947893,  RPNLogLoss=0.176932, RPNL1Loss=0.063037,    RCNNAcc=0.790357,   RCNNLogLoss=1.141996,   RCNNL1Loss=0.237377,
+# Epoch[0] Batch [600]    Speed: 3.38 samples/sec Train-RPNAcc=0.949804,  RPNLogLoss=0.166182, RPNL1Loss=0.064645,    RCNNAcc=0.808197,   RCNNLogLoss=1.025559,   RCNNL1Loss=0.235833,
+# Epoch[0] Batch [700]    Speed: 3.29 samples/sec Train-RPNAcc=0.951949,  RPNLogLoss=0.158510, RPNL1Loss=0.066234,    RCNNAcc=0.820647,   RCNNLogLoss=0.939149,   RCNNL1Loss=0.234840,
+# Epoch[0] Batch [800]    Speed: 3.31 samples/sec Train-RPNAcc=0.952047,  RPNLogLoss=0.154384, RPNL1Loss=0.066083,    RCNNAcc=0.832026,   RCNNLogLoss=0.865931,   RCNNL1Loss=0.228402,
+# Epoch[0] Batch [900]    Speed: 3.26 samples/sec Train-RPNAcc=0.953667,  RPNLogLoss=0.147420, RPNL1Loss=0.064395,    RCNNAcc=0.839128,   RCNNLogLoss=0.812424,   RCNNL1Loss=0.226792,
+
+# In Epoch[0] RPNL1Loss = 0.403792. Then always nan
+
+# Epoch[0] Batch [300] Speed: 1.15 samples/sec Train-RPNAcc=0.812539, RPNLogLoss=0.570043, RPNL1Loss=nan, RCNNAcc=0.767390, RCNNLogLoss=3.596807, RCNNL1Loss=0.010698,
+# Epoch[0] Batch [400] Speed: 1.16 samples/sec Train-RPNAcc=0.821910, RPNLogLoss=0.599778, RPNL1Loss=nan, RCNNAcc=0.818267, RCNNLogLoss=3.577709, RCNNL1Loss=0.008031,
+# Epoch[0] Batch [500] Speed: 1.14 samples/sec Train-RPNAcc=0.828243, RPNLogLoss=0.617132, RPNL1Loss=nan, RCNNAcc=0.848381, RCNNLogLoss=3.396140, RCNNL1Loss=0.006434,
+# Epoch[0] Batch [600] Speed: 1.15 samples/sec Train-RPNAcc=0.832391, RPNLogLoss=0.628403, RPNL1Loss=nan, RCNNAcc=0.869345, RCNNLogLoss=2.870057, RCNNL1Loss=0.005387,
+# Epoch[0] Batch [700] Speed: 1.16 samples/sec Train-RPNAcc=0.834384, RPNLogLoss=0.636100, RPNL1Loss=nan, RCNNAcc=0.883437, RCNNLogLoss=2.499374, RCNNL1Loss=0.004622,
+# Epoch[0] Batch [800] Speed: 1.16 samples/sec Train-RPNAcc=0.836050, RPNLogLoss=0.641726, RPNL1Loss=nan, RCNNAcc=0.894673, RCNNLogLoss=2.215910, RCNNL1Loss=0.004046,
+# Epoch[0] Batch [900] Speed: 1.14 samples/sec Train-RPNAcc=0.837489, RPNLogLoss=0.645880, RPNL1Loss=nan, RCNNAcc=0.903519, RCNNLogLoss=1.994231, RCNNL1Loss=0.003597,
+# Epoch[0] Batch [1000] Speed: 1.16 samples/sec Train-RPNAcc=0.838438, RPNLogLoss=0.649027, RPNL1Loss=nan, RCNNAcc=0.910550, RCNNLogLoss=1.816863, RCNNL1Loss=0.003238,
+# Epoch[0] Batch [1100] Speed: 1.16 samples/sec Train-RPNAcc=0.839179, RPNLogLoss=0.650772, RPNL1Loss=nan, RCNNAcc=0.915993, RCNNLogLoss=1.673953, RCNNL1Loss=0.003987,
+# Epoch[0] Batch [1200] Speed: 1.15 samples/sec Train-RPNAcc=0.839684, RPNLogLoss=0.650882, RPNL1Loss=nan, RCNNAcc=0.920535, RCNNLogLoss=1.553478, RCNNL1Loss=0.003658,
+# Epoch[0] Batch [1300] Speed: 1.15 samples/sec Train-RPNAcc=0.840592, RPNLogLoss=0.649718, RPNL1Loss=nan, RCNNAcc=0.924115, RCNNLogLoss=1.452725, RCNNL1Loss=0.003903,
+# Epoch[0] Batch [1400] Speed: 1.14 samples/sec Train-RPNAcc=0.841459, RPNLogLoss=0.647637, RPNL1Loss=nan, RCNNAcc=0.927468, RCNNLogLoss=1.363495, RCNNL1Loss=0.003740,
+# Epoch[0] Batch [1500] Speed: 1.16 samples/sec Train-RPNAcc=0.841013, RPNLogLoss=0.645282, RPNL1Loss=nan, RCNNAcc=0.930463, RCNNLogLoss=1.284670, RCNNL1Loss=0.003492,
+# Epoch[0] Batch [1600] Speed: 1.16 samples/sec Train-RPNAcc=0.841707, RPNLogLoss=0.642184, RPNL1Loss=nan, RCNNAcc=0.932781, RCNNLogLoss=1.216500, RCNNL1Loss=0.003344,
+# Epoch[0] Batch [1700] Speed: 1.16 samples/sec Train-RPNAcc=0.841856, RPNLogLoss=0.638847, RPNL1Loss=nan, RCNNAcc=0.935341, RCNNLogLoss=1.151333, RCNNL1Loss=0.003149,
+# Epoch[0] Batch [1800] Speed: 1.16 samples/sec Train-RPNAcc=0.842007, RPNLogLoss=0.635248, RPNL1Loss=nan, RCNNAcc=0.937574, RCNNLogLoss=1.095160, RCNNL1Loss=0.004580,
+# Epoch[0] Batch [1900] Speed: 1.17 samples/sec Train-RPNAcc=0.842244, RPNLogLoss=0.631594, RPNL1Loss=nan, RCNNAcc=0.939325, RCNNLogLoss=1.043886, RCNNL1Loss=0.004343,
+# Epoch[0] Batch [2000] Speed: 1.17 samples/sec Train-RPNAcc=0.842616, RPNLogLoss=0.627715, RPNL1Loss=nan, RCNNAcc=0.941225, RCNNLogLoss=0.996324, RCNNL1Loss=0.004129,
+# Epoch[0] Batch [2100] Speed: 1.18 samples/sec Train-RPNAcc=0.843182, RPNLogLoss=0.623727, RPNL1Loss=nan, RCNNAcc=0.942862, RCNNLogLoss=0.953685, RCNNL1Loss=0.003934,
+# Epoch[0] Batch [2200] Speed: 1.18 samples/sec Train-RPNAcc=0.843663, RPNLogLoss=0.619788, RPNL1Loss=nan, RCNNAcc=0.944095, RCNNLogLoss=0.915521, RCNNL1Loss=0.003757,
+# Epoch[0] Batch [2300] Speed: 1.17 samples/sec Train-RPNAcc=0.844234, RPNLogLoss=0.615760, RPNL1Loss=nan, RCNNAcc=0.945496, RCNNLogLoss=0.879742, RCNNL1Loss=0.003595,
+# Epoch[0] Batch [2400] Speed: 1.18 samples/sec Train-RPNAcc=0.844505, RPNLogLoss=0.611821, RPNL1Loss=nan, RCNNAcc=0.947011, RCNNLogLoss=0.846207, RCNNL1Loss=0.003446,
+# Epoch[0] Batch [2500] Speed: 1.16 samples/sec Train-RPNAcc=0.844367, RPNLogLoss=0.608176, RPNL1Loss=nan, RCNNAcc=0.947858, RCNNLogLoss=0.819818, RCNNL1Loss=0.004606,
+# Epoch[0] Batch [2600] Speed: 1.18 samples/sec Train-RPNAcc=0.844443, RPNLogLoss=0.604457, RPNL1Loss=nan, RCNNAcc=0.948941, RCNNLogLoss=0.791787, RCNNL1Loss=0.004434,

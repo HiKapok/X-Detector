@@ -41,7 +41,7 @@ def iou_matrix(bboxes, gt_bboxes):
     return tf.where(tf.equal(inter_vol, 0.0),
                     tf.zeros_like(inter_vol), tf.truediv(inter_vol, union_vol))
 
-def do_dual_max_match(overlap_matrix, high_thres, low_thres, ignore_between=True, gt_max_first=False):
+def do_dual_max_match(overlap_matrix, high_thres, low_thres, ignore_between=True, gt_max_first=True):
     '''
     overlap_matrix: num_gt * num_anchors
     '''
@@ -62,7 +62,7 @@ def do_dual_max_match(overlap_matrix, high_thres, low_thres, ignore_between=True
     gt_to_anchors = tf.argmax(overlap_matrix, axis=1)
 
     if gt_max_first:
-        left_gt_to_anchors_mask = tf.one_hot(gt_to_anchors, tf.shape(overlap_matrix)[1], on_value=1, off_value=0, axis=1, dtype=tf.int64)
+        left_gt_to_anchors_mask = tf.one_hot(gt_to_anchors, tf.shape(overlap_matrix)[1], on_value=1, off_value=0, axis=1, dtype=tf.int32)
     else:
         left_gt_to_anchors_mask = tf.cast(tf.logical_and(tf.reduce_max(anchors_to_gt_mask, axis=1, keep_dims=True) < 1, tf.one_hot(gt_to_anchors, tf.shape(overlap_matrix)[1], on_value=True, off_value=False, axis=1, dtype=tf.bool)), tf.int64)
 
@@ -115,8 +115,10 @@ class AnchorEncoder(object):
         matched_gt, gt_scores = do_dual_max_match(overlap_matrix, self._positive_threshold, self._ignore_threshold)
 
         matched_gt_mask = matched_gt > -1
+        #matched_gt = tf.Print(matched_gt,[matched_gt], message='matched_gt: ', summarize=1000)
         matched_indices = tf.clip_by_value(matched_gt, 0, tf.int64.max)
         gt_labels = tf.gather(self._labels, matched_indices)
+        #gt_labels = tf.Print(gt_labels,[gt_labels * tf.cast(matched_gt_mask, tf.int64) + (-1 * tf.cast(matched_gt < -1, tf.int64))], message='gt_labels: ', summarize=1000)
 
         gt_ymin, gt_xmin, gt_ymax, gt_xmax = [tf.reshape(b, tf.shape(ymin_)) for b in tf.split(tf.gather(self._bboxes, matched_indices), 4, axis=1)]
 
@@ -384,7 +386,7 @@ class AnchorEncoder(object):
             # now the all rois taken as positive is min(n_positives, expected_num_fg_rois)
 
             #negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(tf.logical_or(positive_mask, total_labels < 0)), total_scores < self._rpn_bg_high_thres), total_scores > self._rpn_bg_low_thres)
-            negtive_mask = tf.logical_and(total_labels == 0, total_scores > self._rpn_bg_low_thres)
+            negtive_mask = tf.logical_and(tf.equal(total_labels, 0), total_scores > self._rpn_bg_low_thres)
             negtive_indices = tf.squeeze(tf.where(negtive_mask), axis = -1)
             n_negtives = tf.shape(negtive_indices)[0]
 

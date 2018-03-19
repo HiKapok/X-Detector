@@ -22,8 +22,8 @@ from . import resnet_v2
 from . import depth_conv2d
 
 #initializer_to_use = tf.glorot_uniform_initializer
-initializer_to_use = tf.glorot_uniform_initializer
-conv_bn_initializer_to_use = lambda : tf.truncated_normal_initializer(mean=0.0, stddev=0.005)
+initializer_to_use = tf.glorot_normal_initializer
+conv_bn_initializer_to_use = tf.glorot_normal_initializer#lambda : tf.truncated_normal_initializer(mean=0.0, stddev=0.005)
 
 def dilate_conv2d(inputs, filters, kernel_size, dilation_rate, data_format):
   """Strided 2-D convolution with explicit padding."""

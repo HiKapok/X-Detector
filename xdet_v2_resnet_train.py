@@ -53,7 +53,7 @@ tf.app.flags.DEFINE_integer(
 tf.app.flags.DEFINE_string(
     'dataset_split_name', 'train', 'The name of the train/test split.')
 tf.app.flags.DEFINE_string(
-    'model_dir', './logs/',
+    'model_dir', './logs_v2/',
     'The directory where the model will be stored.')
 tf.app.flags.DEFINE_integer(
     'log_every_n_steps', 10,
@@ -230,7 +230,11 @@ def xdet_model_fn(features, labels, mode, params):
     # negtive examples are those max_overlap is still lower than neg_threshold, note that some positive may also has lower jaccard
     # note those gscores is 0 is either be ignored during anchors encode or anchors have 0 overlap with all ground truth
     #negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(tf.logical_or(positive_mask, glabels < 0)), gscores < params['neg_threshold']), gscores > 0.)
-    negtive_mask = tf.logical_and(glabels==0, gscores > 0.)
+    #gscores = tf.Print(gscores, [tf.reduce_sum(tf.cast(gscores > 0., tf.float32))])
+    #glabels = tf.Print(glabels, [glabels, tf.reduce_sum(tf.cast(tf.equal(glabels, 0), tf.float32))], message='glabels: ', summarize=1000)
+
+    negtive_mask = tf.logical_and(tf.equal(glabels, 0), gscores > 0.)
+    #negtive_mask = tf.Print(negtive_mask, [tf.reduce_sum(tf.cast(negtive_mask, tf.float32))])
     #negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(positive_mask), gscores < params['neg_threshold']), gscores > 0.)
     #negtive_mask = tf.logical_and(gscores < params['neg_threshold'], tf.logical_not(positive_mask))
     fnegtive_mask = tf.cast(negtive_mask, tf.float32)
