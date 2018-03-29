@@ -5,11 +5,19 @@ import numpy as np
 sess = tf.Session()
 
 
+x_on_layer, y_on_layer = tf.meshgrid(tf.range(5), tf.range(5))
+
+x_on_layer, y_on_layer = tf.expand_dims(x_on_layer, axis=-1), tf.expand_dims(y_on_layer, axis=-1)
 t1 = tf.constant([113,114,13,214,111,16])
 t2 = tf.constant([111,112,113,114,115])
+y, x = np.mgrid[0:5, 0:5]
+
+print(y,x)
+print(sess.run(y_on_layer-t1))
 a=tf.expand_dims(t1,0)+tf.expand_dims(t2,1)
 
 b = t1==113
+print(t1==113)
 print(sess.run(b))
 
 

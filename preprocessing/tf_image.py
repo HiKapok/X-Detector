@@ -551,6 +551,10 @@ def ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.1, 0.3, 0.5, 0.
         jaccard = tf.div(inter_vol, union_vol)
         return jaccard
 
+    def areas(bboxes):
+        vol = (bboxes[:, 3] - bboxes[:, 1]) * (bboxes[:, 2] - bboxes[:, 0])
+        return vol
+
     def check_roi_center(width, height, labels, bboxes):
         index = 0
         max_attempt = 20
@@ -575,6 +579,7 @@ def ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.1, 0.3, 0.5, 0.
             mask_min = tf.logical_and(tf.greater(center_y, roi[0]), tf.greater(center_x, roi[1]))
             mask_max = tf.logical_and(tf.less(center_y, roi[2]), tf.less(center_x, roi[3]))
             mask = tf.logical_and(mask_min, mask_max)
+            #mask = tf.logical_and(mask, areas(bboxes) > 0.01)
 
             return index + 1, roi, mask
 

@@ -87,7 +87,7 @@ tf.app.flags.DEFINE_float(
 tf.app.flags.DEFINE_float(
     'match_threshold', 0.6, 'Matching threshold in the loss function.')
 tf.app.flags.DEFINE_float(
-    'neg_threshold', 0.4, 'Matching threshold for the negtive examples in the loss function.')
+    'neg_threshold', 0.45, 'Matching threshold for the negtive examples in the loss function.')
 tf.app.flags.DEFINE_float(
     'select_threshold', 0.01, 'Class-specific confidence score threshold for selecting a box.')
 tf.app.flags.DEFINE_float(
@@ -126,8 +126,8 @@ def input_pipeline():
 
     anchor_creator = anchor_manipulator.AnchorCreator([FLAGS.train_image_size] * 2,
                                                     layers_shapes = [(38, 38)],
-                                                    anchor_scales = [[0.05, 0.1, 0.2, 0.3, 0.4, 0.55, 0.7, 0.85]],#[[0.05, 0.1, 0.25, 0.4, 0.55, 0.7, 0.85]]
-                                                    extra_anchor_scales = [[]],
+                                                    anchor_scales = [[0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]],
+                                                    extra_anchor_scales = [[0.1]],
                                                     anchor_ratios = [[1., 2., 3., .5, 0.3333]],
                                                     layer_steps = [8])
 
@@ -136,7 +136,7 @@ def input_pipeline():
 
         anchor_encoder_decoder = anchor_manipulator.AnchorEncoder(all_anchors,
                                         num_classes = FLAGS.num_classes,
-                                        allowed_borders = [0.],
+                                        allowed_borders = [0.05],
                                         positive_threshold = FLAGS.match_threshold,
                                         ignore_threshold = FLAGS.neg_threshold,
                                         prior_scaling=[0.1, 0.1, 0.2, 0.2])

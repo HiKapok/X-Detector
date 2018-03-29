@@ -123,7 +123,7 @@ tf.app.flags.DEFINE_float(
     'rpn_neg_threshold', 0.3, 'Matching threshold for the negtive examples in the loss function for rpn.')
 # optimizer related configuration
 tf.app.flags.DEFINE_float(
-    'weight_decay', 0.0003, 'The weight decay on the model weights.')
+    'weight_decay', 0.0001, 'The weight decay on the model weights.')
 tf.app.flags.DEFINE_float(
     'momentum', 0.9,
     'The momentum for the MomentumOptimizer and RMSPropOptimizer.')
@@ -171,6 +171,19 @@ FLAGS = tf.app.flags.FLAGS
 
 LIB_NAME = 'ps_roi_align'
 
+if FLAGS.run_on_cloud:
+    # when run on cloud we have no access to /tmp directory, so we change TMPDIR first
+    import subprocess
+    os.environ["TMPDIR"] = os.getcwd()
+    cmake_process = subprocess.Popen(str("cmake " + os.path.join(os.getcwd(), 'cpp/PSROIPooling/') + " ").split(), stdout=subprocess.PIPE, cwd=os.path.join(os.getcwd(), 'cpp/PSROIPooling/build'))
+    output, _ = cmake_process.communicate()
+    print(output)
+    make_process = subprocess.Popen(str("make").split(), stdout=subprocess.PIPE, cwd=os.path.join(os.getcwd(), 'cpp/PSROIPooling/build'))
+    output, _ = make_process.communicate()
+    print(output)
+    print(os.getcwd())
+    tf.gfile.Copy(os.path.join(os.getcwd(), 'cpp/PSROIPooling/build/libps_roi_align.so'), os.path.join(FLAGS.data_dir, 'libps_roi_align.so'), overwrite=True)
+
 def load_op_module(lib_name):
   """
   Load TensorFlow operator library.
@@ -205,8 +218,8 @@ def input_pipeline():
 
     anchor_creator = anchor_manipulator.AnchorCreator([FLAGS.train_image_size] * 2,
                                                     layers_shapes = [(30, 30)],
-                                                    anchor_scales = [[0.05, 0.1, 0.25, 0.45, 0.65, 0.85]],
-                                                    extra_anchor_scales = [[]],
+                                                    anchor_scales = [[0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]],
+                                                    extra_anchor_scales = [[0.1]],
                                                     anchor_ratios = [[1., 2., .5]],
                                                     layer_steps = [16])
 

@@ -137,6 +137,23 @@ COCO_LABELS = {
     "motorcycle":  (4, 'vehicle') ,
     "orange":  (50, 'food')}
 
+_IN_DEBUG = False
+if _IN_DEBUG:
+    from scipy.misc import imread, imsave, imshow, imresize
+    from utility import draw_toolbox
+    from dataset import dataset_common
+    import numpy as np
+
+def save_image_with_bbox(image, labels_, scores_, bboxes_):
+    if not hasattr(save_image_with_bbox, "counter"):
+        save_image_with_bbox.counter = 0  # it doesn't exist yet, so initialize it
+    save_image_with_bbox.counter += 1
+
+    img_to_draw = np.copy(image)#common_preprocessing.np_image_unwhitened(image))
+    if _IN_DEBUG:
+        img_to_draw = draw_toolbox.bboxes_draw_on_img(img_to_draw, labels_, scores_, bboxes_, thickness=2)
+        imsave(os.path.join('./Debug/{}.jpg').format(save_image_with_bbox.counter), img_to_draw)
+    return save_image_with_bbox.counter#np.array([save_image_with_bbox.counter])
 
 #def slim_get_split(split_name, dataset_dir, file_pattern, reader, image_preprocessing_fn,
 #              split_to_sizes, items_to_descriptions, num_classes, **kwargs):
@@ -284,7 +301,20 @@ def slim_get_split(split_name, dataset_dir, file_pattern, reader, image_preproce
 
     glabels_raw = tf.cast(glabels_raw, tf.int32)
 
-    glabels, gtargets, gscores, _ = kwargs['anchor_encoder'](glabels_, gbboxes_)
+    glabels, gtargets, gscores, matched_bboxes, _ = kwargs['anchor_encoder'](glabels_, gbboxes_)
+
+    #glabels[0] = tf.Print(glabels[0], [tf.count_nonzero(glabels[0]>0), glabels[0], matched_bboxes], message='glabels: ', summarize=1000)
+
+    if _IN_DEBUG:
+        image_ = tf.transpose(image, perm=(1, 2, 0))
+        save_image_op = tf.py_func(save_image_with_bbox,
+                                [image_,
+                                tf.clip_by_value(glabels[0], 0, tf.int64.max),
+                                gscores[0],
+                                matched_bboxes[0]],
+                                tf.int64, stateful=True)
+    else:
+        save_image_op = tf.no_op()
 
     list_for_batch = []
     for glabel in glabels:
@@ -307,13 +337,14 @@ def slim_get_split(split_name, dataset_dir, file_pattern, reader, image_preproce
 
     list_for_batch.append(shape)
     list_for_batch.append(image)
-
-    return tf.train.batch(list_for_batch,
-                dynamic_pad=True,#(not is_training),
-                batch_size = kwargs['batch_size'],
-                allow_smaller_final_batch=(not is_training),
-                num_threads = kwargs['num_preprocessing_threads'],
-                capacity = 64 * kwargs['batch_size']), None
+    with tf.control_dependencies([save_image_op]):
+        batch_input = tf.train.batch(list_for_batch,
+                                dynamic_pad=True,#(not is_training),
+                                batch_size = kwargs['batch_size'],
+                                allow_smaller_final_batch=(not is_training),
+                                num_threads = kwargs['num_preprocessing_threads'],
+                                capacity = 64 * kwargs['batch_size'])
+    return batch_input, None
 
 
 def get_split(split_name, dataset_dir, file_pattern, reader, image_preprocessing_fn,

@@ -74,16 +74,20 @@ def bboxes_draw_on_img(img, classes, scores, bboxes, thickness=2):
     scale = 0.4
     text_thickness = 1
     line_type = 8
-
+    #print(bboxes.shape[0], scores.shape[0], classes.shape[0])
     for i in range(bboxes.shape[0]):
+        #print(classes[i])
+        if classes[i] < 1: continue
+        #print(classes[i])
         bbox = bboxes[i]
         color = colors_tableau[classes[i]]
         # Draw bounding box...
         p1 = (int(bbox[0] * shape[0]), int(bbox[1] * shape[1]))
         p2 = (int(bbox[2] * shape[0]), int(bbox[3] * shape[1]))
-
+        #print(p1,p2)
         if (p2[0] - p1[0] < 1) or (p2[1] - p1[1] < 1):
             continue
+
 
         cv2.rectangle(img, p1[::-1], p2[::-1], color, thickness)
         # Draw text...

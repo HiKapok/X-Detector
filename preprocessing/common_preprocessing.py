@@ -355,7 +355,7 @@ def light_head_preprocess_for_train(image, labels, bboxes,
         tf_summary_image(image, bboxes, 'image_with_bboxes_0')
 
         # image, bboxes = control_flow_ops.cond(tf.random_uniform([1], minval=0., maxval=1., dtype=tf.float32)[0] < 0.5, lambda: (image, bboxes), lambda: tf_image.ssd_random_expand(image, bboxes, 2))
-        image, bboxes = control_flow_ops.cond(tf.random_uniform([1], minval=0., maxval=1., dtype=tf.float32)[0] < 0.3, lambda: (image, bboxes), lambda: tf_image.ssd_random_expand(image, bboxes, tf.random_uniform([1], minval=2, maxval=4, dtype=tf.int32)[0]))
+        image, bboxes = control_flow_ops.cond(tf.random_uniform([1], minval=0., maxval=1., dtype=tf.float32)[0] < 0.3, lambda: (image, bboxes), lambda: tf_image.ssd_random_expand(image, bboxes, tf.random_uniform([1], minval=2, maxval=3, dtype=tf.int32)[0]))
         tf_summary_image(image, bboxes, 'image_on_canvas_1')
 
         # Distort image and bounding boxes.
@@ -465,7 +465,7 @@ def preprocess_for_train(image, labels, bboxes,
         tf_summary_image(image, bboxes, 'image_on_canvas_1')
 
         # Distort image and bounding boxes.
-        random_sample_image, labels, bboxes = tf_image.ssd_random_sample_patch(image, labels, bboxes)
+        random_sample_image, labels, bboxes = tf_image.ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.4, 0.6, 0.8, 1.])
         tf_summary_image(random_sample_image, bboxes, 'image_shape_distorted_2')
 
         # Randomly flip the image horizontally.

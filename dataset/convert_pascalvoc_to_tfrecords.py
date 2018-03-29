@@ -71,14 +71,26 @@ def _process_image(directory, name):
         labels.append(int(VOC_LABELS[label][0]))
         labels_text.append(label.encode('ascii'))
 
-        if obj.find('difficult'):
-            difficult.append(int(obj.find('difficult').text))
+        isdifficult = obj.find('difficult')
+        if isdifficult is not None:
+            #print('ddd')
+            difficult.append(int(isdifficult.text))
         else:
             difficult.append(0)
-        if obj.find('truncated'):
-            truncated.append(int(obj.find('truncated').text))
+
+        istruncated = obj.find('truncated')
+        if istruncated is not None:
+            truncated.append(int(istruncated.text))
         else:
             truncated.append(0)
+        # if obj.find('difficult'):
+        #     difficult.append(int(obj.find('difficult').text))
+        # else:
+        #     difficult.append(0)
+        # if obj.find('truncated'):
+        #     truncated.append(int(obj.find('truncated').text))
+        # else:
+        #     truncated.append(0)
 
         bbox = obj.find('bndbox')
         bboxes.append((float(bbox.find('ymin').text) / shape[0],

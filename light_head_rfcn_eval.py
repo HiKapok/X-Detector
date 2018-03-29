@@ -51,14 +51,14 @@ tf.app.flags.DEFINE_float(
     'gpu_memory_fraction', 1., 'GPU memory fraction to use.')
 # scaffold related configuration
 tf.app.flags.DEFINE_string(
-    'data_dir', '../PASCAL/VOC_TF/VOC0712TF/',
+    'data_dir', '../PASCAL/VOC_TF/VOC2007TEST_TF/',
     'The directory where the dataset input data is stored.')
 tf.app.flags.DEFINE_string(
-    'dataset_name', 'pascalvoc_0712', 'The name of the dataset to load.')
+    'dataset_name', 'pascalvoc_2007', 'The name of the dataset to load.')
 tf.app.flags.DEFINE_integer(
     'num_classes', 21, 'Number of classes to use in the dataset.')
 tf.app.flags.DEFINE_string(
-    'dataset_split_name', 'train', 'The name of the train/test split.')
+    'dataset_split_name', 'test', 'The name of the train/test split.')
 tf.app.flags.DEFINE_string(
     'model_dir', './logs_light/',
     'The directory where the model will be stored.')
@@ -69,7 +69,7 @@ tf.app.flags.DEFINE_integer(
     'log_every_n_steps', 10,
     'The frequency with which logs are print.')
 tf.app.flags.DEFINE_integer(
-    'save_summary_steps', 500,
+    'save_summary_steps', 100,
     'The frequency with which summaries are saved, in seconds.')
 # model related configuration
 tf.app.flags.DEFINE_integer(
@@ -121,7 +121,7 @@ tf.app.flags.DEFINE_float(
     'rpn_neg_threshold', 0.3, 'Matching threshold for the negtive examples in the loss function for rpn.')
 # optimizer related configuration
 tf.app.flags.DEFINE_float(
-    'weight_decay', 0.0003, 'The weight decay on the model weights.')
+    'weight_decay', 0.0001, 'The weight decay on the model weights.')
 # checkpoint related configuration
 tf.app.flags.DEFINE_string(
     'checkpoint_path', './model/xception',#None,
@@ -182,8 +182,8 @@ def input_pipeline():
 
     anchor_creator = anchor_manipulator.AnchorCreator([FLAGS.train_image_size] * 2,
                                                     layers_shapes = [(30, 30)],
-                                                    anchor_scales = [[0.05, 0.1, 0.25, 0.45, 0.65, 0.85]],
-                                                    extra_anchor_scales = [[]],
+                                                    anchor_scales = [[0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]],
+                                                    extra_anchor_scales = [[0.1]],
                                                     anchor_ratios = [[1., 2., .5]],
                                                     layer_steps = [16])
 
