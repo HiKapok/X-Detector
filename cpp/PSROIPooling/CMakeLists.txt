@@ -3,8 +3,39 @@ PROJECT(ps_roi_align)
 
 find_package(CUDA REQUIRED)
 
+EXECUTE_PROCESS(COMMAND python3.5 -c "import os; print(os.getcwd(), end='', flush=True)" OUTPUT_VARIABLE CWD)
+MESSAGE(STATUS "Found CWD: " ${CWD})
+
+EXECUTE_PROCESS(COMMAND python3.5 -c "import subprocess; process = subprocess.Popen('nvidia-smi -i 0 --query-gpu=name --format=csv'.split(), stdout=subprocess.PIPE); output, _ = process.communicate(); output = str(output); device_capability_map = {
+    'Tesla K80'   : '37',
+    'Tesla K40'   : '35',
+    'Tesla K20'   : '35',
+    'Tesla C2075' : '20',
+    'Tesla C2050' : '20',
+    'Tesla C2070' : '20',
+    'Tesla V100'  : '70',
+    'Tesla P100'  : '60',
+    'Tesla P40'   : '61',
+    'Tesla P4'    : '61',
+    'Tesla M60'   : '52',
+    'Tesla M40'   : '52',
+    'Tesla K80'   : '37',
+    'Tesla K40'   : '35',
+    'Tesla K20'   : '35',
+    'Tesla K10'   : '30',
+    'GeForce GTX 1080 Ti' : '61'
+}; cap = '61';
+for k, v in device_capability_map.items():
+    if k in output:
+        cap = v
+        break
+print('gencode arch=compute_' + cap + ',code=sm_' + cap)" OUTPUT_VARIABLE GPU_CAPABILITY)
+MESSAGE(STATUS "Found GPU_CAPABILITY: " ${GPU_CAPABILITY})
+
 # Pass options to NVCC
-set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -gencode arch=compute_61,code=sm_61 -D GOOGLE_CUDA=1 -x cu -Xcompiler -fPIC --expt-relaxed-constexpr")
+set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} --keep --keep-dir ${CWD} -${GPU_CAPABILITY} -D GOOGLE_CUDA=1 -x cu -Xcompiler -fPIC --expt-relaxed-constexpr")
+
+#set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} --keep --keep-dir ${CWD} -gencode arch=compute_61,code=sm_61 -D GOOGLE_CUDA=1 -x cu -Xcompiler -fPIC --expt-relaxed-constexpr")
 
 # compiler flags
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -O2 ${OpenMP_CXX_FLAGS} -Wall -fPIC -D_GLIBCXX_USE_CXX11_ABI=0 -DGOOGLE_CUDA=1")

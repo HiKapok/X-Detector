@@ -89,7 +89,7 @@ tf.app.flags.DEFINE_float(
 tf.app.flags.DEFINE_float(
     'neg_threshold', 0.45, 'Matching threshold for the negtive examples in the loss function.')
 tf.app.flags.DEFINE_float(
-    'select_threshold', 0.01, 'Class-specific confidence score threshold for selecting a box.')
+    'select_threshold', 0.51, 'Class-specific confidence score threshold for selecting a box.')
 tf.app.flags.DEFINE_float(
     'nms_threshold', 0.4, 'Matching threshold in NMS algorithm.')
 tf.app.flags.DEFINE_integer(

@@ -360,14 +360,14 @@ def xdet_head(body_cls_input, body_regress_input, num_classes, num_anchors, is_t
 
     # never cause information bottleneck
     # classification module
-    # cls_inputs = body_cls_input
-    # cls_depth_list = [512, 256]
-    # for depth_ in cls_depth_list:
-    #   if num_anchors * num_classes < 0.8 * depth_:
-    #     cls_inputs = pred_submodule(cls_inputs, depth_)
+    cls_inputs = body_cls_input
+    cls_depth_list = [512, 256]
+    for depth_ in cls_depth_list:
+      if num_anchors * num_classes < 0.8 * depth_:
+        cls_inputs = pred_submodule(cls_inputs, depth_)
 
-    cls_inputs = pred_inception_module(body_cls_input, 256, is_training, data_format, 'inception_1')
-    cls_inputs = pred_inception_module(cls_inputs, 256, is_training, data_format, 'inception_2')
+    # cls_inputs = pred_inception_module(body_cls_input, 256, is_training, data_format, 'inception_1')
+    # cls_inputs = pred_inception_module(cls_inputs, 256, is_training, data_format, 'inception_2')
 
     cls_outputs = tf.layers.conv2d(
                                 inputs=cls_inputs, filters=num_anchors * num_classes, kernel_size=3, strides=1,
