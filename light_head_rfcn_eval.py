@@ -98,7 +98,7 @@ tf.app.flags.DEFINE_integer(
 tf.app.flags.DEFINE_float(
     'fg_ratio', 0.25, 'fore-ground ratio in the total proposals.')
 tf.app.flags.DEFINE_float(
-    'match_threshold', 0.55, 'Matching threshold in the loss function for proposals.')
+    'match_threshold', 0.53, 'Matching threshold in the loss function for proposals.')
 tf.app.flags.DEFINE_float(
     'neg_threshold_high', 0.5, 'Matching threshold for the negtive examples in the loss function for proposals.')
 tf.app.flags.DEFINE_float(
@@ -106,7 +106,7 @@ tf.app.flags.DEFINE_float(
 tf.app.flags.DEFINE_integer(
     'rpn_anchors_per_image', 256, 'total rpn anchors to calculate loss and backprop.')
 tf.app.flags.DEFINE_integer(
-    'rpn_pre_nms_top_n', 4000, 'selected numbers of proposals to nms.')
+    'rpn_pre_nms_top_n', 5000, 'selected numbers of proposals to nms.')
 tf.app.flags.DEFINE_integer(
     'rpn_post_nms_top_n', 300, 'keep numbers of proposals after nms.')
 tf.app.flags.DEFINE_float(
@@ -398,7 +398,7 @@ def lighr_head_model_fn(features, labels, mode, params):
 
         rpn_bboxes_pred = labels['rpn_decode_fn'](rpn_location_pred)
 
-        proposals_bboxes = xception_body.get_proposals(rpn_object_score, rpn_bboxes_pred, None, params['rpn_pre_nms_top_n'], params['rpn_post_nms_top_n'], params['nms_threshold'], params['rpn_min_size'], (mode == tf.estimator.ModeKeys.TRAIN), params['data_format'])
+        proposals_bboxes = xception_body.get_proposals(rpn_object_score, rpn_bboxes_pred, None, params['rpn_pre_nms_top_n'], params['rpn_post_nms_top_n'], params['rpn_nms_thres'], params['rpn_min_size'], (mode == tf.estimator.ModeKeys.TRAIN), params['data_format'])
         #proposals_targets = tf.Print(proposals_targets, [proposals_targets], message='proposals_targets0:')
 
         cls_score, bboxes_reg = xception_body.get_head(large_sep_feature, lambda input_, bboxes_, grid_width_, grid_height_ : ps_roi_align(input_, bboxes_, grid_width_, grid_height_, pool_method), 7, 7, None, proposals_bboxes, params['num_classes'], (mode == tf.estimator.ModeKeys.TRAIN), False, 0, params['data_format'], 'final_head')

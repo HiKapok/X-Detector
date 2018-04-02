@@ -100,7 +100,7 @@ tf.app.flags.DEFINE_float(
 tf.app.flags.DEFINE_float(
     'fg_ratio', 0.25, 'fore-ground ratio in the total proposals.')
 tf.app.flags.DEFINE_float(
-    'match_threshold', 0.55, 'Matching threshold in the loss function for proposals.')
+    'match_threshold', 0.53, 'Matching threshold in the loss function for proposals.')
 tf.app.flags.DEFINE_float(
     'neg_threshold_high', 0.5, 'Matching threshold for the negtive examples in the loss function for proposals.')
 tf.app.flags.DEFINE_float(
@@ -108,9 +108,9 @@ tf.app.flags.DEFINE_float(
 tf.app.flags.DEFINE_integer(
     'rpn_anchors_per_image', 256, 'total rpn anchors to calculate loss and backprop.')
 tf.app.flags.DEFINE_integer(
-    'rpn_pre_nms_top_n', 9000, 'selected numbers of proposals to nms.')
+    'rpn_pre_nms_top_n', 10000, 'selected numbers of proposals to nms.')
 tf.app.flags.DEFINE_integer(
-    'rpn_post_nms_top_n', 1600, 'keep numbers of proposals after nms.')
+    'rpn_post_nms_top_n', 1800, 'keep numbers of proposals after nms.')
 tf.app.flags.DEFINE_float(
     'rpn_min_size', 16*1./480, 'minsize threshold of proposals to be filtered for rpn.')
 tf.app.flags.DEFINE_float(
@@ -377,7 +377,7 @@ def lighr_head_model_fn(features, labels, mode, params):
         tf.summary.scalar('rpn_loss', rpn_loss)
         #print(rpn_loc_loss)
 
-        proposals_bboxes, proposals_targets, proposals_labels, proposals_scores = xception_body.get_proposals(rpn_object_score, rpn_bboxes_pred, labels['rpn_encode_fn'], params['rpn_pre_nms_top_n'], params['rpn_post_nms_top_n'], params['nms_threshold'], params['rpn_min_size'], (mode == tf.estimator.ModeKeys.TRAIN), params['data_format'])
+        proposals_bboxes, proposals_targets, proposals_labels, proposals_scores = xception_body.get_proposals(rpn_object_score, rpn_bboxes_pred, labels['rpn_encode_fn'], params['rpn_pre_nms_top_n'], params['rpn_post_nms_top_n'], params['rpn_nms_thres'], params['rpn_min_size'], (mode == tf.estimator.ModeKeys.TRAIN), params['data_format'])
         #proposals_targets = tf.Print(proposals_targets, [proposals_targets], message='proposals_targets0:')
         def head_loss_func(cls_score, bboxes_reg, select_indices, proposals_targets, proposals_labels):
             if select_indices is not None:
