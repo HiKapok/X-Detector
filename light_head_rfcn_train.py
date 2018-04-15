@@ -123,7 +123,7 @@ tf.app.flags.DEFINE_float(
     'rpn_neg_threshold', 0.3, 'Matching threshold for the negtive examples in the loss function for rpn.')
 # optimizer related configuration
 tf.app.flags.DEFINE_float(
-    'weight_decay', 0.00002, 'The weight decay on the model weights.')
+    'weight_decay', 0.0002, 'The weight decay on the model weights.')
 tf.app.flags.DEFINE_float(
     'momentum', 0.9,
     'The momentum for the MomentumOptimizer and RMSPropOptimizer.')
@@ -370,7 +370,7 @@ def lighr_head_model_fn(features, labels, mode, params):
         #gtargets = tf.Print(gtargets, [gtargets], message='gtargets:', summarize=100)
 
         rpn_l1_distance = modified_smooth_l1(location_pred, gtargets, sigma=1.)
-        rpn_loc_loss = tf.reduce_mean(tf.reduce_sum(rpn_l1_distance, axis=-1)) * params['rpn_fg_ratio']
+        rpn_loc_loss = tf.reduce_mean(tf.reduce_sum(rpn_l1_distance, axis=-1)) / params['rpn_fg_ratio']
         rpn_loc_loss = tf.identity(rpn_loc_loss, name='rpn_location_loss')
         tf.summary.scalar('rpn_location_loss', rpn_loc_loss)
         tf.losses.add_loss(rpn_loc_loss)
@@ -398,11 +398,11 @@ def lighr_head_model_fn(features, labels, mode, params):
                 head_cross_entropy_loss = tf.identity(head_cross_entropy_loss, name='head_cross_entropy_loss')
                 tf.summary.scalar('head_cross_entropy_loss', head_cross_entropy_loss)
 
-                head_location_loss = tf.reduce_mean(head_loc_loss)#/params['fg_ratio']
+                head_location_loss = tf.reduce_mean(head_loc_loss)/params['fg_ratio']
                 head_location_loss = tf.identity(head_location_loss, name='head_location_loss')
                 tf.summary.scalar('head_location_loss', head_location_loss)
 
-            return head_cross_entropy + head_loc_loss#/params['fg_ratio']
+            return head_cross_entropy + head_loc_loss/params['fg_ratio']
 
         head_loss = xception_body.get_head(large_sep_feature, lambda input_, bboxes_, grid_width_, grid_height_ : ps_roi_align(input_, bboxes_, grid_width_, grid_height_, pool_method), 7, 7, lambda cls, bbox, indices : head_loss_func(cls, bbox, indices, proposals_targets, proposals_labels), proposals_bboxes, params['num_classes'], (mode == tf.estimator.ModeKeys.TRAIN), params['using_ohem'], params['ohem_roi_one_image'], params['data_format'], 'final_head')
 

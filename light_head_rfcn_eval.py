@@ -121,7 +121,7 @@ tf.app.flags.DEFINE_float(
     'rpn_neg_threshold', 0.3, 'Matching threshold for the negtive examples in the loss function for rpn.')
 # optimizer related configuration
 tf.app.flags.DEFINE_float(
-    'weight_decay', 0.00002, 'The weight decay on the model weights.')
+    'weight_decay', 0.0002, 'The weight decay on the model weights.')
 # checkpoint related configuration
 tf.app.flags.DEFINE_string(
     'checkpoint_path', './model/xception',#None,

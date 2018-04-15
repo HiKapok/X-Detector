@@ -86,7 +86,7 @@ tf.app.flags.DEFINE_string(
 tf.app.flags.DEFINE_float(
     'negative_ratio', 3., 'Negative ratio in the loss function.')
 tf.app.flags.DEFINE_float(
-    'match_threshold', 0.6, 'Matching threshold in the loss function.')
+    'match_threshold', 0.56, 'Matching threshold in the loss function.')
 tf.app.flags.DEFINE_float(
     'neg_threshold', 0.4, 'Matching threshold for the negtive examples in the loss function.')
 # optimizer related configuration
