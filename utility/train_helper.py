@@ -75,6 +75,12 @@ def get_latest_checkpoint_for_evaluate(flags):
     flags_checkpoint_path = flags.checkpoint_path
     if flags.run_on_cloud:
         flags_checkpoint_path = flags.model_dir
+    # reader = tf.train.NewCheckpointReader(tf.train.latest_checkpoint(flags_checkpoint_path))
+    # variables = reader.get_variable_to_shape_map()
+    # print('######################## variables in checkpoint ########################')
+    # for ele in variables:
+    #     print(ele)
+    # print('######################### variables_to_restore #########################')
     # Warn the user if a checkpoint exists in the model_dir. Then ignore.
     if tf.train.latest_checkpoint(flags.model_dir):
         tf.logging.info('Ignoring --checkpoint_path because a checkpoint already exists in %s' % flags.model_dir)
@@ -84,8 +90,6 @@ def get_latest_checkpoint_for_evaluate(flags):
         checkpoint_path = tf.train.latest_checkpoint(flags_checkpoint_path)
     else:
         checkpoint_path = flags_checkpoint_path
-
-    tf.logging.info('Restore from %s.' % (checkpoint_path))
 
     return checkpoint_path
 

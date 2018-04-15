@@ -77,6 +77,8 @@ parser.add_argument(
     '--cloud_checkpoint_path', type=str, default='resnet50/model.ckpt',
     help='The path to a checkpoint from which to fine-tune.')
 
+# INFO:tensorflow:cross_entropy = 0.128834, learning_rate = 1.09375e-06, train_accuracy = 0.847687 (20.201 sec)
+# 2018-04-04 12:54:15,964 INFO (MainThread-421) cross_entropy = 0.128834, learning_rate = 1.09375e-06, train_accuracy = 0.847687 (20.201 sec)
 
 _DEFAULT_IMAGE_SIZE = 224
 _NUM_CHANNELS = 3

@@ -54,7 +54,19 @@ def _pad_axis(x, offset, size, axis=0, name=None):
         x = tf.reshape(x, tf.stack(shape))
         return x
 
-def _bboxes_nms(scores, bboxes, nms_threshold = 0.5, keep_top_k = 200, mode = 'union', scope=None):
+def _bboxes_nms(scores, bboxes, nms_threshold=0.5, keep_top_k=200, mode=None, scope=None):
+    with tf.name_scope(scope, 'bboxes_nms_single', [scores, bboxes]):
+        # Apply NMS algorithm.
+        idxes = tf.image.non_max_suppression(bboxes, scores,
+                                             keep_top_k, nms_threshold)
+        scores = tf.gather(scores, idxes)
+        bboxes = tf.gather(bboxes, idxes)
+        # Pad results.
+        scores = _pad_axis(scores, 0, keep_top_k, axis=0)
+        bboxes = _pad_axis(bboxes, 0, keep_top_k, axis=0)
+        return [scores, bboxes]
+
+def _bboxes_nms1(scores, bboxes, nms_threshold = 0.5, keep_top_k = 200, mode = 'union', scope=None):
     with tf.name_scope(scope, 'rpn_bboxes_nms', [scores, bboxes]):
         num_bboxes = tf.shape(scores)[0]
         #keep_top_k=tf.minimum(num_bboxes, rpn_post_nms_top_n)
@@ -270,7 +282,8 @@ def XceptionBody(input_image, num_classes, is_training = False, data_format='cha
                                     padding='same', data_format=data_format,
                                     name='block2_pool')
     # 119
-    inputs = inputs + residual
+    #inputs = inputs + residual
+    inputs = tf.add(inputs, residual, name='residual_add_0')
 
     #inputs = tf.Print(inputs,[tf.shape(inputs), inputs,residual])
 
@@ -290,7 +303,8 @@ def XceptionBody(input_image, num_classes, is_training = False, data_format='cha
                                     padding='same', data_format=data_format,
                                     name='block3_pool')
     # 60
-    inputs = inputs + residual
+    #inputs = inputs + residual
+    inputs = tf.add(inputs, residual, name='residual_add_1')
 
     # (119-1+0*2)/2 + 1 = 30
     residual = tf.layers.conv2d(inputs, 728, (1, 1), use_bias=False, name='conv2d_3', strides=(2, 2),
@@ -308,7 +322,8 @@ def XceptionBody(input_image, num_classes, is_training = False, data_format='cha
                                     padding='same', data_format=data_format,
                                     name='block4_pool')
     # 30
-    inputs = inputs + residual
+    #inputs = inputs + residual
+    inputs = tf.add(inputs, residual, name='residual_add_2')
 
     for index in range(8):
         residual = inputs
@@ -318,7 +333,8 @@ def XceptionBody(input_image, num_classes, is_training = False, data_format='cha
         inputs = relu_separable_bn_block(inputs, 728, prefix + '_sepconv2', is_training, data_format)
         inputs = relu_separable_bn_block(inputs, 728, prefix + '_sepconv3', is_training, data_format)
 
-        inputs = inputs + residual
+        #inputs = inputs + residual
+        inputs = tf.add(inputs, residual, name=prefix + '_residual_add')
 
     mid_outputs = tf.nn.relu(inputs, name='before_block13_act')
     # remove stride 2 for the residual connection
@@ -332,7 +348,8 @@ def XceptionBody(input_image, num_classes, is_training = False, data_format='cha
     inputs = relu_separable_bn_block(inputs, 728, 'block13_sepconv1', is_training, data_format)
     inputs = relu_separable_bn_block(inputs, 1024, 'block13_sepconv2', is_training, data_format)
 
-    inputs = inputs + residual
+    #inputs = inputs + residual
+    inputs = tf.add(inputs, residual, name='residual_add_3')
     # use atrous algorithm at last two conv
     inputs = tf.layers.separable_conv2d(inputs, 1536, (3, 3),
                         strides=(1, 1), dilation_rate=(2, 2), padding='same',
@@ -358,7 +375,6 @@ def XceptionBody(input_image, num_classes, is_training = False, data_format='cha
                             epsilon=BN_EPSILON, training=is_training, reuse=None, fused=USE_FUSED_BN)
     outputs = tf.nn.relu(inputs, name='block14_sepconv2_act')
     # the output size here is 30 x 30
-
 
     return mid_outputs, outputs
 
@@ -405,28 +421,31 @@ def get_proposals(object_score, bboxes_pred, encode_fn, rpn_pre_nms_top_n, rpn_p
     9. rematch all_rois to get regress and classification target
     10.sample all_rois as proposals
     '''
-    #bboxes_pred = decode_fn(location_pred)
-    bboxes_pred = tf.map_fn(lambda _bboxes : _bboxes_clip([0., 0., 1., 1.], _bboxes), bboxes_pred, back_prop=False)
-    object_score, bboxes_pred = tf.map_fn(lambda _score_bboxes : _filter_and_sort_boxes(_score_bboxes[0], _score_bboxes[1], rpn_min_size, keep_topk=rpn_pre_nms_top_n), [object_score, bboxes_pred], back_prop=False, infer_shape=True)
-    #object_score, bboxes_pred = tf.map_fn(lambda _score_bboxes : _bboxes_sort(_score_bboxes[0], _score_bboxes[1], top_k=rpn_pre_nms_top_n), [object_score, bboxes_pred], back_prop=False)
-    # object_score.set_shape([None, rpn_pre_nms_top_n])
-    # bboxes_pred.set_shape([None, rpn_pre_nms_top_n, 4])
-    object_score, bboxes_pred = tf.map_fn(lambda _score_bboxes : _bboxes_nms(_score_bboxes[0], _score_bboxes[1], nms_threshold = nms_threshold, keep_top_k=rpn_post_nms_top_n, mode = 'union'), [object_score, bboxes_pred], back_prop=False)#, dtype=[tf.float32, tf.float32], infer_shape=True
-    # padding to fix the size of rois
-    # the object_score is not in descending order when the upsample padding happened
-    #object_score = tf.Print(object_score, [object_score[0],object_score[1],object_score[2],object_score[3]], message='object_score0:', summarize=1000)
-    #bboxes_pred = tf.Print(bboxes_pred, [bboxes_pred[0],bboxes_pred[1],bboxes_pred[2],bboxes_pred[3]], message='bboxes_pred0:', summarize=1000)
-    object_score, bboxes_pred = tf.map_fn(lambda _score_bboxes : _upsample_rois(_score_bboxes[0], _score_bboxes[1], keep_top_k= rpn_post_nms_top_n), [object_score, bboxes_pred], back_prop=False)
-    # match and sample to get proposals and targets
-    #print(encode_fn(bboxes_pred))
-    # object_score = tf.Print(object_score, [object_score[0],object_score[1],object_score[2],object_score[3]], message='object_score1:', summarize=1000)
-    # bboxes_pred = tf.Print(bboxes_pred, [bboxes_pred[0],bboxes_pred[1],bboxes_pred[2],bboxes_pred[3]], message='bboxes_pred1:', summarize=1000)
-    if not is_training:
-        return tf.stop_gradient(bboxes_pred)
+    # it's better to run these task on GPU to avoid lots of Host->Device memory copy
+    with tf.device('/cpu:0'):
+        #bboxes_pred = decode_fn(location_pred)
+        bboxes_pred = tf.map_fn(lambda _bboxes : _bboxes_clip([0., 0., 1., 1.], _bboxes), bboxes_pred, back_prop=False)
+        object_score, bboxes_pred = tf.map_fn(lambda _score_bboxes : _filter_and_sort_boxes(_score_bboxes[0], _score_bboxes[1], rpn_min_size, keep_topk=rpn_pre_nms_top_n), [object_score, bboxes_pred], back_prop=False, infer_shape=True)
+        #object_score, bboxes_pred = tf.map_fn(lambda _score_bboxes : _bboxes_sort(_score_bboxes[0], _score_bboxes[1], top_k=rpn_pre_nms_top_n), [object_score, bboxes_pred], back_prop=False)
+        # object_score.set_shape([None, rpn_pre_nms_top_n])
+        # bboxes_pred.set_shape([None, rpn_pre_nms_top_n, 4])
 
-    proposals_bboxes, proposals_targets, proposals_labels, proposals_scores = encode_fn(bboxes_pred)
+        object_score, bboxes_pred = tf.map_fn(lambda _score_bboxes : _bboxes_nms(_score_bboxes[0], _score_bboxes[1], nms_threshold = nms_threshold, keep_top_k=rpn_post_nms_top_n, mode = 'union'), [object_score, bboxes_pred], back_prop=False)#, dtype=[tf.float32, tf.float32], infer_shape=True
+        # padding to fix the size of rois
+        # the object_score is not in descending order when the upsample padding happened
+        #object_score = tf.Print(object_score, [object_score[0],object_score[1],object_score[2],object_score[3]], message='object_score0:', summarize=1000)
+        #bboxes_pred = tf.Print(bboxes_pred, [bboxes_pred[0],bboxes_pred[1],bboxes_pred[2],bboxes_pred[3]], message='bboxes_pred0:', summarize=1000)
+        object_score, bboxes_pred = tf.map_fn(lambda _score_bboxes : _upsample_rois(_score_bboxes[0], _score_bboxes[1], keep_top_k= rpn_post_nms_top_n), [object_score, bboxes_pred], back_prop=False)
+        # match and sample to get proposals and targets
+        #print(encode_fn(bboxes_pred))
+        # object_score = tf.Print(object_score, [object_score[0],object_score[1],object_score[2],object_score[3]], message='object_score1:', summarize=1000)
+        # bboxes_pred = tf.Print(bboxes_pred, [bboxes_pred[0],bboxes_pred[1],bboxes_pred[2],bboxes_pred[3]], message='bboxes_pred1:', summarize=1000)
+        if not is_training:
+            return tf.stop_gradient(bboxes_pred)
 
-    return tf.stop_gradient(proposals_bboxes), tf.stop_gradient(proposals_targets), tf.stop_gradient(proposals_labels), tf.stop_gradient(proposals_scores)
+        proposals_bboxes, proposals_targets, proposals_labels, proposals_scores = encode_fn(bboxes_pred)
+
+        return tf.stop_gradient(proposals_bboxes), tf.stop_gradient(proposals_targets), tf.stop_gradient(proposals_labels), tf.stop_gradient(proposals_scores)
 
 def large_sep_kernel(net_input, depth_mid, depth_output, is_training, data_format, var_scope):
   with tf.variable_scope(var_scope):

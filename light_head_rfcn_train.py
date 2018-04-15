@@ -299,6 +299,8 @@ def lighr_head_model_fn(features, labels, mode, params):
         rpn_cls_score = tf.reshape(rpn_cls_score, [-1, 2])
         rpn_object_score = tf.nn.softmax(rpn_cls_score)[:, -1]
 
+
+        #with tf.device('/cpu:0'):
         rpn_object_score = tf.reshape(rpn_object_score, [params['batch_size'], -1])
         rpn_location_pred = tf.reshape(rpn_bbox_pred, [params['batch_size'], -1, 4])
 
@@ -415,9 +417,7 @@ def lighr_head_model_fn(features, labels, mode, params):
 
     # Add weight decay to the loss. We exclude the batch norm variables because
     # doing so leads to a small improvement in accuracy.
-    loss = rpn_cross_entropy + rpn_loc_loss + head_loss + params['weight_decay'] * tf.add_n(
-      [tf.nn.l2_loss(v) for v in tf.trainable_variables()
-       if 'batch_normalization' not in v.name])
+    loss = rpn_cross_entropy + rpn_loc_loss + head_loss + params['weight_decay'] * tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables() if (('batch_normalization' not in v.name) and ('_bn' not in v.name))])#_bn
     total_loss = tf.identity(loss, name='total_loss')
 
     if mode == tf.estimator.ModeKeys.TRAIN:
@@ -460,6 +460,7 @@ def main(_):
     gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = FLAGS.gpu_memory_fraction)
     config = tf.ConfigProto(allow_soft_placement = True, log_device_placement = False, intra_op_parallelism_threads = FLAGS.num_cpu_threads, inter_op_parallelism_threads = FLAGS.num_cpu_threads, gpu_options = gpu_options)
 
+    #trace_level=tf.RunOptions.FULL_TRACE
     # Set up a RunConfig to only save checkpoints once per training cycle.
     run_config = tf.estimator.RunConfig().replace(
                                         save_checkpoints_secs=FLAGS.save_checkpoints_secs).replace(
@@ -518,7 +519,7 @@ def main(_):
     logging_hook = tf.train.LoggingTensorHook(tensors=tensors_to_log, every_n_iter=FLAGS.log_every_n_steps)
 
     print('Starting a training cycle.')
-
+    #hook = tf.train.ProfilerHook(save_steps=50, output_dir='.')
     # debug_hook = tf_debug.LocalCLIDebugHook(thread_name_filter="MainThread$")
     # debug_hook.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
     # xdetector.train(input_fn=input_pipeline(), hooks=[debug_hook])

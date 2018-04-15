@@ -81,7 +81,7 @@ tf.app.flags.DEFINE_string(
     'with CPU. If left unspecified, the data format will be chosen '
     'automatically based on whether TensorFlow was built for CPU or GPU.')
 tf.app.flags.DEFINE_float(
-    'weight_decay', 0.0005, 'The weight decay on the model weights.')
+    'weight_decay', 0.0002, 'The weight decay on the model weights.')
 tf.app.flags.DEFINE_float(
     'negative_ratio', 3., 'Negative ratio in the loss function.')
 tf.app.flags.DEFINE_float(
@@ -98,7 +98,7 @@ tf.app.flags.DEFINE_integer(
     'nms_topk', 100, 'Number of total object to keep after NMS.')
 # checkpoint related configuration
 tf.app.flags.DEFINE_string(
-    'checkpoint_path', './model/resnet50',#None,
+    'checkpoint_path', './model/resnet50_dilate',#None,
     'The path to a checkpoint from which to fine-tune.')
 tf.app.flags.DEFINE_string(
     'model_scope', 'xdet_resnet',
@@ -107,7 +107,7 @@ tf.app.flags.DEFINE_boolean(
     'run_on_cloud', True,
     'Wether we will train on cloud (checkpoint will be found in the "data_dir/cloud_checkpoint_path").')
 tf.app.flags.DEFINE_string(
-    'cloud_checkpoint_path', 'resnet50/model.ckpt',
+    'cloud_checkpoint_path', 'resnet50_dilate',
     'The path to a checkpoint from which to fine-tune.')
 
 FLAGS = tf.app.flags.FLAGS

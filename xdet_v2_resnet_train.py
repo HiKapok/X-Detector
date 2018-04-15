@@ -91,7 +91,7 @@ tf.app.flags.DEFINE_float(
     'neg_threshold', 0.4, 'Matching threshold for the negtive examples in the loss function.')
 # optimizer related configuration
 tf.app.flags.DEFINE_float(
-    'weight_decay', 0.0005, 'The weight decay on the model weights.')
+    'weight_decay', 0.0002, 'The weight decay on the model weights.')
 tf.app.flags.DEFINE_float(
     'momentum', 0.9,
     'The momentum for the MomentumOptimizer and RMSPropOptimizer.')
@@ -114,7 +114,7 @@ tf.app.flags.DEFINE_string(
     'The values of learning_rate decay factor for each segment between boundaries (comma-separated list).')
 # checkpoint related configuration
 tf.app.flags.DEFINE_string(
-    'checkpoint_path', './model/resnet50',#None,
+    'checkpoint_path', './model/resnet50_dilate',#None,
     'The path to a checkpoint from which to fine-tune.')
 tf.app.flags.DEFINE_string(
     'checkpoint_model_scope', '',
@@ -132,7 +132,7 @@ tf.app.flags.DEFINE_boolean(
     'run_on_cloud', True,
     'Wether we will train on cloud (pre-trained model will be placed in the "data_dir/cloud_checkpoint_path").')
 tf.app.flags.DEFINE_string(
-    'cloud_checkpoint_path', 'resnet50/model.ckpt',
+    'cloud_checkpoint_path', 'resnet50_dilate',
     'The path to a checkpoint from which to fine-tune.')
 
 FLAGS = tf.app.flags.FLAGS
