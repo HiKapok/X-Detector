@@ -181,12 +181,13 @@ void RotatedPSROIAlignGradFunctor<GPUDevice, T>::operator()(OpKernelContext* con
 
     std::tie(batch_size, num_channals, map_height, map_width, num_rois, using_max_pool) = dim_info;
 
+    //std::cout << batch_size << " " << num_rois << " " << num_channals << " " << std::endl;
     CudaLaunchConfig config = GetCudaLaunchConfig(batch_size * num_rois * num_channals, d);
     //grad_output = grad_output.setZero();
     SetZero <<<config.block_count, config.thread_per_block, 0, d.stream()>>> (batch_size * map_height * map_width * num_channals, grad_output.data());
 
     RotatedPSROIAlignGradCudaKernel <<<config.block_count,
-                        config.thread_per_block, 0, d.stream()>>> (config, inputs.data(), rois.data(), orders.data(), pooled_features_grad.data(), pooled_index.data(), grad_output.data(), grid_dim_width, grid_dim_height, batch_size, num_channals, map_height, map_width, num_rois, using_max_pool);
+                        config.thread_per_block/2, 0, d.stream()>>> (config, inputs.data(), rois.data(), orders.data(), pooled_features_grad.data(), pooled_index.data(), grad_output.data(), grid_dim_width, grid_dim_height, batch_size, num_channals, map_height, map_width, num_rois, using_max_pool);
 
     cudaError_t err = cudaGetLastError();
     if(cudaSuccess != err)

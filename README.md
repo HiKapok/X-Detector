@@ -1,7 +1,7 @@
 # X-Detector
 X-Detector is a collection of several object detection algorithms. And some of those have not appeared in any academic papers.
 
-Up to now, this repository contains code of the re-implementent of [Light-Head R-CNN](https://arxiv.org/abs/1711.07264) and this trained version had got to 70.5%mAP(72.6%mAP using VOC12 evaluation alogorithm), more improvement is still in process. 
+Up to now, this repository contains code of the re-implementent of [Light-Head R-CNN](https://arxiv.org/abs/1711.07264) and this trained version had got to 72.8%mAP(75.1%mAP using VOC12 evaluation alogorithm), more improvement is still in process. You can download the latest model weights (trained on PASCAL-07+12) from [GoogleDrive](https://drive.google.com/open?id=1hOvHnvl4hY6A1hawI3cTxpXY6GcPENMG).
 
 Below is the training timeline of Light-Head RCNN for single 480x480 input image.
 

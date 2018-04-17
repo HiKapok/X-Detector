@@ -85,9 +85,9 @@ tf.app.flags.DEFINE_float(
 tf.app.flags.DEFINE_float(
     'negative_ratio', 3., 'Negative ratio in the loss function.')
 tf.app.flags.DEFINE_float(
-    'match_threshold', 0.6, 'Matching threshold in the loss function.')
+    'match_threshold', 0.5, 'Matching threshold in the loss function.')#0.6
 tf.app.flags.DEFINE_float(
-    'neg_threshold', 0.45, 'Matching threshold for the negtive examples in the loss function.')
+    'neg_threshold', 0.5, 'Matching threshold for the negtive examples in the loss function.')#0.45
 tf.app.flags.DEFINE_float(
     'select_threshold', 0.01, 'Class-specific confidence score threshold for selecting a box.')
 tf.app.flags.DEFINE_float(
@@ -95,10 +95,10 @@ tf.app.flags.DEFINE_float(
 tf.app.flags.DEFINE_integer(
     'nms_topk_percls', 200, 'Number of object for each class to keep after NMS.')
 tf.app.flags.DEFINE_integer(
-    'nms_topk', 100, 'Number of total object to keep after NMS.')
+    'nms_topk', 200, 'Number of total object to keep after NMS.')
 # checkpoint related configuration
 tf.app.flags.DEFINE_string(
-    'checkpoint_path', './model/resnet50_dilate',#None,
+    'checkpoint_path', './model/resnet50',#None,
     'The path to a checkpoint from which to fine-tune.')
 tf.app.flags.DEFINE_string(
     'model_scope', 'xdet_resnet',
@@ -107,7 +107,7 @@ tf.app.flags.DEFINE_boolean(
     'run_on_cloud', True,
     'Wether we will train on cloud (checkpoint will be found in the "data_dir/cloud_checkpoint_path").')
 tf.app.flags.DEFINE_string(
-    'cloud_checkpoint_path', 'resnet50_dilate',
+    'cloud_checkpoint_path', 'resnet50',
     'The path to a checkpoint from which to fine-tune.')
 
 FLAGS = tf.app.flags.FLAGS
