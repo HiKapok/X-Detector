@@ -108,7 +108,7 @@ tf.app.flags.DEFINE_integer(
 tf.app.flags.DEFINE_integer(
     'rpn_pre_nms_top_n', 5000, 'selected numbers of proposals to nms.')
 tf.app.flags.DEFINE_integer(
-    'rpn_post_nms_top_n', 300, 'keep numbers of proposals after nms.')
+    'rpn_post_nms_top_n', 1000, 'keep numbers of proposals after nms.')
 tf.app.flags.DEFINE_float(
     'rpn_min_size', 16*1./480, 'minsize threshold of proposals to be filtered for rpn.')
 tf.app.flags.DEFINE_float(
