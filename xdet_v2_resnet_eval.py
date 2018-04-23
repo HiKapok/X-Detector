@@ -85,9 +85,9 @@ tf.app.flags.DEFINE_float(
 tf.app.flags.DEFINE_float(
     'negative_ratio', 3., 'Negative ratio in the loss function.')
 tf.app.flags.DEFINE_float(
-    'match_threshold', 0.5, 'Matching threshold in the loss function.')#0.6
+    'match_threshold', 0.6, 'Matching threshold in the loss function.')#0.6
 tf.app.flags.DEFINE_float(
-    'neg_threshold', 0.5, 'Matching threshold for the negtive examples in the loss function.')#0.45
+    'neg_threshold', 0.4, 'Matching threshold for the negtive examples in the loss function.')#0.45
 tf.app.flags.DEFINE_float(
     'select_threshold', 0.01, 'Class-specific confidence score threshold for selecting a box.')
 tf.app.flags.DEFINE_float(
