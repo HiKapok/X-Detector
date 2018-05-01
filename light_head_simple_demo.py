@@ -178,11 +178,15 @@ def main(_):
                                          keep_top_k=FLAGS.nms_topk)
 
                 labels_list = []
+                scores_list = []
+                bboxes_list = []
                 for k, v in selected_scores.items():
                     labels_list.append(tf.ones_like(v, tf.int32) * k)
+                    scores_list.append(v)
+                    bboxes_list.append(selected_bboxes[k])
                 all_labels = tf.concat(labels_list, axis=0)
-                all_scores = tf.concat(list(selected_scores.values()), axis=0)
-                all_bboxes = tf.concat(list(selected_bboxes.values()), axis=0)
+                all_scores = tf.concat(scores_list, axis=0)
+                all_bboxes = tf.concat(bboxes_list, axis=0)
 
         saver = tf.train.Saver()
         with tf.Session() as sess:
