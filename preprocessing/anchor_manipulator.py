@@ -19,13 +19,16 @@ import numpy as np
 
 from tensorflow.contrib.image.python.ops import image_ops
 
-def areas(bboxes):
-    ymin, xmin, ymax, xmax = tf.split(bboxes, 4, axis=1)
+def areas(gt_bboxes):
+    ymin, xmin, ymax, xmax = tf.split(gt_bboxes, 4, axis=1)
     return (xmax - xmin) * (ymax - ymin)
-def intersection(bboxes, gt_bboxes):
-    ymin, xmin, ymax, xmax = tf.split(bboxes, 4, axis=1)
-    gt_ymin, gt_xmin, gt_ymax, gt_xmax = [tf.transpose(b, perm=[1, 0]) for b in tf.split(gt_bboxes, 4, axis=1)]
 
+def intersection(gt_bboxes, default_bboxes):
+    # num_anchors x 1
+    ymin, xmin, ymax, xmax = tf.split(gt_bboxes, 4, axis=1)
+    # 1 x num_anchors
+    gt_ymin, gt_xmin, gt_ymax, gt_xmax = [tf.transpose(b, perm=[1, 0]) for b in tf.split(default_bboxes, 4, axis=1)]
+    # broadcast here to generate the full matrix
     int_ymin = tf.maximum(ymin, gt_ymin)
     int_xmin = tf.maximum(xmin, gt_xmin)
     int_ymax = tf.minimum(ymax, gt_ymax)
@@ -34,40 +37,61 @@ def intersection(bboxes, gt_bboxes):
     w = tf.maximum(int_xmax - int_xmin, 0.)
 
     return h * w
-def iou_matrix(bboxes, gt_bboxes):
-    inter_vol = intersection(bboxes, gt_bboxes)
-    union_vol = areas(bboxes) + tf.transpose(areas(gt_bboxes), perm=[1, 0]) - inter_vol
+def iou_matrix(gt_bboxes, default_bboxes):
+    inter_vol = intersection(gt_bboxes, default_bboxes)
+    # broadcast
+    union_vol = areas(gt_bboxes) + tf.transpose(areas(default_bboxes), perm=[1, 0]) - inter_vol
 
-    return tf.where(tf.equal(inter_vol, 0.0),
+    return tf.where(tf.equal(union_vol, 0.0),
                     tf.zeros_like(inter_vol), tf.truediv(inter_vol, union_vol))
 
-def do_dual_max_match(overlap_matrix, high_thres, low_thres, ignore_between = True, gt_max_first=True):
+def do_dual_max_match(overlap_matrix, high_thres, low_thres, ignore_between=True, gt_max_first=True):
     '''
     overlap_matrix: num_gt * num_anchors
     '''
+    # first match from anchors' side
     anchors_to_gt = tf.argmax(overlap_matrix, axis=0)
+    # the matching degree
     match_values = tf.reduce_max(overlap_matrix, axis=0)
 
-    positive_mask = tf.greater_equal(match_values, high_thres)
+    #positive_mask = tf.greater(match_values, high_thres)
     less_mask = tf.less(match_values, low_thres)
     between_mask = tf.logical_and(tf.less(match_values, high_thres), tf.greater_equal(match_values, low_thres))
     negative_mask = less_mask if ignore_between else between_mask
     ignore_mask = between_mask if ignore_between else less_mask
-
+    # fill all negative positions with -1, all ignore positions is -2
     match_indices = tf.where(negative_mask, -1 * tf.ones_like(anchors_to_gt), anchors_to_gt)
     match_indices = tf.where(ignore_mask, -2 * tf.ones_like(match_indices), match_indices)
 
-    anchors_to_gt_mask = tf.one_hot(tf.clip_by_value(match_indices, -1, tf.cast(tf.shape(overlap_matrix)[0], tf.int64)), tf.shape(overlap_matrix)[0], on_value=1, off_value=0, axis=0, dtype=tf.int32)
-
+    # negtive values has no effect in tf.one_hot, that means all zeros along that axis
+    # so all positive match positions in anchors_to_gt_mask is 1, all others are 0
+    anchors_to_gt_mask = tf.one_hot(tf.clip_by_value(match_indices, -1, tf.cast(tf.shape(overlap_matrix)[0], tf.int64)),
+                                    tf.shape(overlap_matrix)[0], on_value=1, off_value=0, axis=0, dtype=tf.int32)
+    # match from ground truth's side
     gt_to_anchors = tf.argmax(overlap_matrix, axis=1)
 
     if gt_max_first:
+        # the max match from ground truth's side has higher priority
         left_gt_to_anchors_mask = tf.one_hot(gt_to_anchors, tf.shape(overlap_matrix)[1], on_value=1, off_value=0, axis=1, dtype=tf.int32)
     else:
-        left_gt_to_anchors_mask = tf.cast(tf.logical_and(tf.reduce_max(anchors_to_gt_mask, axis=1, keep_dims=True) < 1, tf.one_hot(gt_to_anchors, tf.shape(overlap_matrix)[1], on_value=True, off_value=False, axis=1, dtype=tf.bool)), tf.int64)
-
-    selected_scores = tf.gather_nd(overlap_matrix, tf.stack([tf.where(tf.reduce_max(left_gt_to_anchors_mask, axis=0) > 0, tf.argmax(left_gt_to_anchors_mask, axis=0), anchors_to_gt), tf.range(tf.cast(tf.shape(overlap_matrix)[1], tf.int64))], axis=1))
-    return tf.where(tf.reduce_max(left_gt_to_anchors_mask, axis=0) > 0, tf.argmax(left_gt_to_anchors_mask, axis=0), match_indices), selected_scores
+        # the max match from anchors' side has higher priority
+        # use match result from ground truth's side only when the the matching degree from anchors' side is lower than position threshold
+        left_gt_to_anchors_mask = tf.cast(tf.logical_and(tf.reduce_max(anchors_to_gt_mask, axis=1, keep_dims=True) < 1,
+                                                        tf.one_hot(gt_to_anchors, tf.shape(overlap_matrix)[1],
+                                                                    on_value=True, off_value=False, axis=1, dtype=tf.bool)
+                                                        ), tf.int64)
+    # can not use left_gt_to_anchors_mask here, because there are many ground truthes match to one anchor, we should pick the highest one even when we are merging matching from ground truth side
+    left_gt_to_anchors_scores = overlap_matrix * tf.to_float(left_gt_to_anchors_mask)
+    # merge matching results from ground truth's side with the original matching results from anchors' side
+    # then select all the overlap score of those matching pairs
+    selected_scores = tf.gather_nd(overlap_matrix,  tf.stack([tf.where(tf.reduce_max(left_gt_to_anchors_mask, axis=0) > 0,
+                                                                        tf.argmax(left_gt_to_anchors_scores, axis=0),
+                                                                        anchors_to_gt),
+                                                                tf.range(tf.cast(tf.shape(overlap_matrix)[1], tf.int64))], axis=1))
+    # return the matching results for both foreground anchors and background anchors, also with overlap scores
+    return tf.where(tf.reduce_max(left_gt_to_anchors_mask, axis=0) > 0,
+                    tf.argmax(left_gt_to_anchors_scores, axis=0),
+                    match_indices), selected_scores
 
 class AnchorEncoder(object):
     def __init__(self, anchors, num_classes, allowed_borders, positive_threshold, ignore_threshold, prior_scaling, rpn_fg_thres = 0.5, rpn_bg_high_thres = 0.5, rpn_bg_low_thres = 0.):

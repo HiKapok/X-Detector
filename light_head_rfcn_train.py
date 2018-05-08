@@ -339,7 +339,7 @@ def lighr_head_model_fn(features, labels, mode, params):
             # now the all rois taken as positive is min(n_positives, expected_num_fg_rois)
 
             #negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(tf.logical_or(positive_mask, glabels < 0)), gscores < params['rpn_neg_threshold']), gscores > 0.)
-            negtive_mask = tf.logical_and(tf.equal(glabels, 0), gscores > 0.)
+            negtive_mask = tf.equal(glabels, 0)#tf.logical_and(tf.equal(glabels, 0), gscores > 0.)
             negtive_indices = tf.squeeze(tf.where(negtive_mask), axis = -1)
             n_negtives = tf.shape(negtive_indices)[0]
 

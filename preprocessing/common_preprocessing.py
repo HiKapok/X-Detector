@@ -354,13 +354,13 @@ def light_head_preprocess_for_train(image, labels, bboxes,
             image = tf.image.convert_image_dtype(image, dtype=tf.float32)
         tf_summary_image(image, bboxes, 'image_with_bboxes_0')
 
-        # image, bboxes = control_flow_ops.cond(tf.random_uniform([1], minval=0., maxval=1., dtype=tf.float32)[0] < 0.5, lambda: (image, bboxes), lambda: tf_image.ssd_random_expand(image, bboxes, 2))
-        image, bboxes = control_flow_ops.cond(tf.random_uniform([1], minval=0., maxval=1., dtype=tf.float32)[0] < 0.3, lambda: (image, bboxes), lambda: tf_image.ssd_random_expand(image, bboxes, tf.random_uniform([1], minval=2, maxval=3, dtype=tf.int32)[0]))
-        tf_summary_image(image, bboxes, 'image_on_canvas_1')
+        # Randomly distort the colors. There are 4 ways to do it.
+        distort_color_image = apply_with_random_selector(image,
+                                                lambda x, ordering: distort_color(x, ordering, fast_mode),
+                                                num_cases=4)
+        tf_summary_image(distort_color_image, bboxes, 'image_color_distorted_1')
 
-        # Distort image and bounding boxes.
-        #print(image, labels, bboxes)
-        random_sample_image, labels, bboxes = tf_image.ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.4, 0.6, 0.8, 1.])
+        random_sample_image, labels, bboxes = tf_image.ssd_random_sample_patch_wrapper(distort_color_image, labels, bboxes, [_R_MEAN/255., _G_MEAN/255., _B_MEAN/255.])
         tf_summary_image(random_sample_image, bboxes, 'image_shape_distorted_2')
 
         # Randomly flip the image horizontally.
@@ -369,18 +369,10 @@ def light_head_preprocess_for_train(image, labels, bboxes,
         random_sample_flip_resized_image = tf_image.resize_image(random_sample_flip_image, out_shape,
                                           method=tf.image.ResizeMethod.BILINEAR,
                                           align_corners=False)
-
         tf_summary_image(random_sample_flip_resized_image, bboxes, 'image_fliped_and_resized_3')
 
-        # Randomly distort the colors. There are 4 ways to do it.
-        dst_image = apply_with_random_selector(
-                random_sample_flip_resized_image,
-                lambda x, ordering: distort_color(x, ordering, fast_mode),
-                num_cases=4)
-        tf_summary_image(dst_image, bboxes, 'image_color_distorted_4')
-
         # Rescale to VGG input scale.
-        image = dst_image * 2.
+        image = random_sample_flip_resized_image * 2.
         image.set_shape([None, None, 3])
         image = tf_image_whitened(image, [_R_MEAN/127.5, _G_MEAN/127.5, _B_MEAN/127.5])
         # Image data format.
@@ -478,12 +470,13 @@ def preprocess_for_train(image, labels, bboxes,
             image = tf.image.convert_image_dtype(image, dtype=tf.float32)
         tf_summary_image(image, bboxes, 'image_with_bboxes_0')
 
-        # image, bboxes = control_flow_ops.cond(tf.random_uniform([1], minval=0., maxval=1., dtype=tf.float32)[0] < 0.5, lambda: (image, bboxes), lambda: tf_image.ssd_random_expand(image, bboxes, 2))
-        image, bboxes = control_flow_ops.cond(tf.random_uniform([1], minval=0., maxval=1., dtype=tf.float32)[0] < 0.3, lambda: (image, bboxes), lambda: tf_image.ssd_random_expand(image, bboxes, tf.random_uniform([1], minval=2, maxval=4, dtype=tf.int32)[0]))
-        tf_summary_image(image, bboxes, 'image_on_canvas_1')
+        # Randomly distort the colors. There are 4 ways to do it.
+        distort_color_image = apply_with_random_selector(image,
+                                            lambda x, ordering: distort_color(x, ordering, fast_mode),
+                                            num_cases=4)
+        tf_summary_image(distort_color_image, bboxes, 'image_color_distorted_1')
 
-        # Distort image and bounding boxes.
-        random_sample_image, labels, bboxes = tf_image.ssd_random_sample_patch(image, labels, bboxes, ratio_list=[0.4, 0.6, 0.8, 1.])
+        random_sample_image, labels, bboxes = tf_image.ssd_random_sample_patch_wrapper(distort_color_image, labels, bboxes, [_R_MEAN/255., _G_MEAN/255., _B_MEAN/255.])
         tf_summary_image(random_sample_image, bboxes, 'image_shape_distorted_2')
 
         # Randomly flip the image horizontally.
@@ -492,18 +485,10 @@ def preprocess_for_train(image, labels, bboxes,
         random_sample_flip_resized_image = tf_image.resize_image(random_sample_flip_image, out_shape,
                                           method=tf.image.ResizeMethod.BILINEAR,
                                           align_corners=False)
-
         tf_summary_image(random_sample_flip_resized_image, bboxes, 'image_fliped_and_resized_3')
 
-        # Randomly distort the colors. There are 4 ways to do it.
-        dst_image = apply_with_random_selector(
-                random_sample_flip_resized_image,
-                lambda x, ordering: distort_color(x, ordering, fast_mode),
-                num_cases=4)
-        tf_summary_image(dst_image, bboxes, 'image_color_distorted_4')
-
         # Rescale to VGG input scale.
-        image = dst_image * 255.
+        image = random_sample_flip_resized_image * 255.
         image.set_shape([None, None, 3])
         image = tf_image_whitened(image, [_R_MEAN, _G_MEAN, _B_MEAN])
         # Image data format.

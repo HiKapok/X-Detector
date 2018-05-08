@@ -129,7 +129,7 @@ tf.app.flags.DEFINE_boolean(
     'ignore_missing_vars', True,
     'When restoring a checkpoint would ignore missing variables.')
 tf.app.flags.DEFINE_boolean(
-    'run_on_cloud', True,
+    'run_on_cloud', False,
     'Wether we will train on cloud (pre-trained model will be placed in the "data_dir/cloud_checkpoint_path").')
 tf.app.flags.DEFINE_string(
     'cloud_checkpoint_path', 'resnet50',
@@ -227,30 +227,30 @@ def xdet_model_fn(features, labels, mode, params):
     positive_mask = glabels > 0#tf.logical_and(glabels > 0, gscores > params['match_threshold'])
     fpositive_mask = tf.cast(positive_mask, tf.float32)
     n_positives = tf.reduce_sum(fpositive_mask)
-    # negtive examples are those max_overlap is still lower than neg_threshold, note that some positive may also has lower jaccard
-    # note those gscores is 0 is either be ignored during anchors encode or anchors have 0 overlap with all ground truth
-    #negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(tf.logical_or(positive_mask, glabels < 0)), gscores < params['neg_threshold']), gscores > 0.)
-    #gscores = tf.Print(gscores, [tf.reduce_sum(tf.cast(gscores > 0., tf.float32))])
-    #glabels = tf.Print(glabels, [glabels, tf.reduce_sum(tf.cast(tf.equal(glabels, 0), tf.float32))], message='glabels: ', summarize=1000)
 
-    negtive_mask = tf.logical_and(tf.equal(glabels, 0), gscores > 0.)
-    #negtive_mask = tf.Print(negtive_mask, [tf.reduce_sum(tf.cast(negtive_mask, tf.float32))])
-    #negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(positive_mask), gscores < params['neg_threshold']), gscores > 0.)
-    #negtive_mask = tf.logical_and(gscores < params['neg_threshold'], tf.logical_not(positive_mask))
-    fnegtive_mask = tf.cast(negtive_mask, tf.float32)
-    n_negtives = tf.reduce_sum(fnegtive_mask)
+    batch_glabels = tf.reshape(glabels, [tf.shape(features)[0], -1])
+    batch_n_positives = tf.count_nonzero(batch_glabels, -1)
 
-    n_neg_to_select = tf.cast(params['negative_ratio'] * n_positives, tf.int32)
-    n_neg_to_select = tf.minimum(n_neg_to_select, tf.cast(n_negtives, tf.int32))
+    batch_negtive_mask = tf.equal(batch_glabels, 0)
+    batch_n_negtives = tf.count_nonzero(batch_negtive_mask, -1)
+
+    batch_n_neg_select = tf.cast(params['negative_ratio'] * tf.cast(batch_n_positives, tf.float32), tf.int32)
+    batch_n_neg_select = tf.minimum(batch_n_neg_select, tf.cast(batch_n_negtives, tf.int32))
 
     # hard negative mining for classification
-    predictions_for_bg = tf.nn.softmax(cls_pred)[:, 0]
-    prob_for_negtives = tf.where(negtive_mask,
+    predictions_for_bg = tf.nn.softmax(tf.reshape(cls_pred, [tf.shape(features)[0], -1, params['num_classes']]))[:, :, 0]
+    prob_for_negtives = tf.where(batch_negtive_mask,
                            0. - predictions_for_bg,
                            # ignore all the positives
                            0. - tf.ones_like(predictions_for_bg))
-    topk_prob_for_bg, _ = tf.nn.top_k(prob_for_negtives, k=n_neg_to_select)
-    selected_neg_mask = prob_for_negtives > topk_prob_for_bg[-1]
+    topk_prob_for_bg, _ = tf.nn.top_k(prob_for_negtives, k=tf.shape(prob_for_negtives)[1])
+    score_at_k = tf.gather_nd(topk_prob_for_bg, tf.stack([tf.range(tf.shape(features)[0]), batch_n_neg_select - 1], axis=-1))
+
+    selected_neg_mask = prob_for_negtives >= tf.expand_dims(score_at_k, axis=-1)
+
+    negtive_mask = tf.reshape(tf.logical_and(batch_negtive_mask, selected_neg_mask), [-1])#tf.logical_and(tf.equal(glabels, 0), gscores > 0.)
+    #negtive_mask = tf.logical_and(tf.logical_and(tf.logical_not(positive_mask), gscores < params['neg_threshold']), gscores > 0.)
+    #negtive_mask = tf.logical_and(gscores < params['neg_threshold'], tf.logical_not(positive_mask))
 
     # # random select negtive examples for classification
     # selected_neg_mask = tf.random_uniform(tf.shape(gscores), minval=0, maxval=1.) < tf.where(
@@ -260,11 +260,11 @@ def xdet_model_fn(features, labels, mode, params):
     #                                                                                     name='rand_select_negtive')
 
     # include both selected negtive and all positive examples
-    final_mask = tf.stop_gradient(tf.logical_or(tf.logical_and(negtive_mask, selected_neg_mask), positive_mask))
+    final_mask = tf.stop_gradient(tf.logical_or(negtive_mask, positive_mask))
     total_examples = tf.reduce_sum(tf.cast(final_mask, tf.float32))
 
     # add mask for glabels and cls_pred here
-    glabels = tf.boolean_mask(tf.clip_by_value(glabels, 0, FLAGS.num_classes), tf.stop_gradient(final_mask))
+    glabels = tf.boolean_mask(tf.clip_by_value(glabels, 0, params['num_classes']), tf.stop_gradient(final_mask))
     cls_pred = tf.boolean_mask(cls_pred, tf.stop_gradient(final_mask))
     location_pred = tf.boolean_mask(location_pred, tf.stop_gradient(positive_mask))
     gtargets = tf.boolean_mask(gtargets, tf.stop_gradient(positive_mask))
