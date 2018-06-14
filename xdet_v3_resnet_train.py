@@ -129,7 +129,7 @@ tf.app.flags.DEFINE_boolean(
     'ignore_missing_vars', True,
     'When restoring a checkpoint would ignore missing variables.')
 tf.app.flags.DEFINE_boolean(
-    'run_on_cloud', False,
+    'run_on_cloud', True,
     'Wether we will train on cloud (pre-trained model will be placed in the "data_dir/cloud_checkpoint_path").')
 tf.app.flags.DEFINE_string(
     'cloud_checkpoint_path', 'resnet50/model.ckpt',

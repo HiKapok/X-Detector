@@ -22,12 +22,14 @@ from __future__ import print_function
 from . import pascalvoc_2007
 from . import pascalvoc_2012
 from . import pascalvoc_2007_2012
+from . import simple_pascalvoc_2007_2012
 #from . import coco_2017
 
 datasets_map = {
     'pascalvoc_2007': pascalvoc_2007,
     'pascalvoc_2012': pascalvoc_2012,
     'pascalvoc_0712': pascalvoc_2007_2012,
+    'xdet_v4_pascalvoc_0712': simple_pascalvoc_2007_2012,
     #'coco_2017': coco_2017
 }
 

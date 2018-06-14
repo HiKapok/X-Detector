@@ -106,7 +106,7 @@ def get_split(split_name, dataset_dir, image_preprocessing_fn, dataset_name, fil
     """
     if not file_pattern:
         file_pattern = FILE_PATTERN
-    return dataset_common.slim_get_split(split_name, dataset_dir,
+    return dataset_common.simple_slim_get_split(split_name, dataset_dir,
                                       file_pattern, reader,
                                       image_preprocessing_fn,
                                       dataset_name,

@@ -1,0 +1,262 @@
+# Copyright 2018 Changan Wang
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# =============================================================================
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import os
+import sys
+
+import tensorflow as tf
+from scipy.misc import imread, imsave, imshow, imresize
+import numpy as np
+
+from net import xdet_body_v5
+
+from dataset import dataset_common
+from preprocessing import common_preprocessing
+from preprocessing import anchor_manipulator_v2
+from utility import draw_toolbox
+
+tf.app.flags.DEFINE_integer(
+    'num_classes', 21, 'Number of classes to use in the dataset.')
+# model related configuration
+tf.app.flags.DEFINE_integer(
+    'train_image_size', 320,
+    'The size of the input image for the model to use.')
+tf.app.flags.DEFINE_integer(
+    'resnet_size', 50,
+    'The size of the ResNet model to use.')
+tf.app.flags.DEFINE_string(
+    'data_format', 'channels_last', # 'channels_first' or 'channels_last'
+    'A flag to override the data format used in the model. channels_first '
+    'provides a performance boost on GPU but is not always compatible '
+    'with CPU. If left unspecified, the data format will be chosen '
+    'automatically based on whether TensorFlow was built for CPU or GPU.')
+tf.app.flags.DEFINE_float(
+    'select_threshold', 0.01, 'Class-specific confidence score threshold for selecting a box.')
+tf.app.flags.DEFINE_float(
+    'min_size', 0.03, 'The min size of bboxes to keep.')
+tf.app.flags.DEFINE_float(
+    'nms_threshold', 0.45, 'Matching threshold in NMS algorithm.')
+tf.app.flags.DEFINE_integer(
+    'nms_topk', 200, 'Number of total object to keep after NMS.')
+tf.app.flags.DEFINE_integer(
+    'keep_topk', 400, 'Number of total object to keep for each image before nms.')
+# checkpoint related configuration
+tf.app.flags.DEFINE_string(
+    'model_dir', './logs_v5',
+    'The path to a checkpoint from which to fine-tune.')
+tf.app.flags.DEFINE_string(
+    'test_dataset_path', '/media/rs/7A0EE8880EE83EAF/Detections/PASCAL/VOC/VOC2007TEST/JPEGImages',
+    'The path to a checkpoint from which to fine-tune.')
+tf.app.flags.DEFINE_string(
+    'model_scope', 'xdet_resnet',
+    'Model scope name used to replace the name_scope in checkpoint.')
+
+FLAGS = tf.app.flags.FLAGS
+#CUDA_VISIBLE_DEVICES
+
+def get_checkpoint():
+    if tf.gfile.IsDirectory(FLAGS.model_dir):
+        checkpoint_path = tf.train.latest_checkpoint(FLAGS.model_dir)
+    else:
+        checkpoint_path = FLAGS.model_dir
+
+    return checkpoint_path
+
+def select_bboxes(scores_pred, bboxes_pred, num_classes, select_threshold):
+    selected_bboxes = {}
+    selected_scores = {}
+    with tf.name_scope('select_bboxes', [scores_pred, bboxes_pred]):
+        for class_ind in range(1, num_classes):
+            class_scores = scores_pred[:, class_ind]
+
+            select_mask = class_scores > select_threshold
+            select_mask = tf.cast(select_mask, tf.float32)
+            selected_bboxes[class_ind] = tf.multiply(bboxes_pred, tf.expand_dims(select_mask, axis=-1))
+            selected_scores[class_ind] = tf.multiply(class_scores, select_mask)
+
+    return selected_bboxes, selected_scores
+
+def clip_bboxes(ymin, xmin, ymax, xmax, name):
+    with tf.name_scope(name, 'clip_bboxes', [ymin, xmin, ymax, xmax]):
+        ymin = tf.maximum(ymin, 0.)
+        xmin = tf.maximum(xmin, 0.)
+        ymax = tf.minimum(ymax, 1.)
+        xmax = tf.minimum(xmax, 1.)
+
+        ymin = tf.minimum(ymin, ymax)
+        xmin = tf.minimum(xmin, xmax)
+
+        return ymin, xmin, ymax, xmax
+
+def filter_bboxes(scores_pred, ymin, xmin, ymax, xmax, min_size, name):
+    with tf.name_scope(name, 'filter_bboxes', [scores_pred, ymin, xmin, ymax, xmax]):
+        width = xmax - xmin
+        height = ymax - ymin
+
+        filter_mask = tf.logical_and(width > min_size, height > min_size)
+
+        filter_mask = tf.cast(filter_mask, tf.float32)
+        return tf.multiply(ymin, filter_mask), tf.multiply(xmin, filter_mask), \
+                tf.multiply(ymax, filter_mask), tf.multiply(xmax, filter_mask), tf.multiply(scores_pred, filter_mask)
+
+def sort_bboxes(scores_pred, ymin, xmin, ymax, xmax, keep_topk, name):
+    with tf.name_scope(name, 'sort_bboxes', [scores_pred, ymin, xmin, ymax, xmax]):
+        cur_bboxes = tf.shape(scores_pred)[0]
+        scores, idxes = tf.nn.top_k(scores_pred, k=tf.minimum(keep_topk, cur_bboxes), sorted=True)
+
+        ymin, xmin, ymax, xmax = tf.gather(ymin, idxes), tf.gather(xmin, idxes), tf.gather(ymax, idxes), tf.gather(xmax, idxes)
+
+        paddings_scores = tf.expand_dims(tf.stack([0, tf.maximum(keep_topk-cur_bboxes, 0)], axis=0), axis=0)
+
+        return tf.pad(ymin, paddings_scores, "CONSTANT"), tf.pad(xmin, paddings_scores, "CONSTANT"),\
+                tf.pad(ymax, paddings_scores, "CONSTANT"), tf.pad(xmax, paddings_scores, "CONSTANT"),\
+                tf.pad(scores, paddings_scores, "CONSTANT")
+
+def nms_bboxes(scores_pred, bboxes_pred, nms_topk, nms_threshold, name):
+    with tf.name_scope(name, 'nms_bboxes', [scores_pred, bboxes_pred]):
+        idxes = tf.image.non_max_suppression(bboxes_pred, scores_pred, nms_topk, nms_threshold)
+        return tf.gather(scores_pred, idxes), tf.gather(bboxes_pred, idxes)
+
+def parse_by_class(cls_pred, bboxes_pred, num_classes, select_threshold, min_size, keep_topk, nms_topk, nms_threshold):
+    with tf.name_scope('select_bboxes', [cls_pred, bboxes_pred]):
+        scores_pred = tf.nn.softmax(cls_pred)
+        selected_bboxes, selected_scores = select_bboxes(scores_pred, bboxes_pred, num_classes, select_threshold)
+        for class_ind in range(1, num_classes):
+            ymin, xmin, ymax, xmax = tf.unstack(selected_bboxes[class_ind], 4, axis=-1)
+            #ymin, xmin, ymax, xmax = tf.squeeze(ymin), tf.squeeze(xmin), tf.squeeze(ymax), tf.squeeze(xmax)
+            ymin, xmin, ymax, xmax = clip_bboxes(ymin, xmin, ymax, xmax, 'clip_bboxes_{}'.format(class_ind))
+            ymin, xmin, ymax, xmax, selected_scores[class_ind] = filter_bboxes(selected_scores[class_ind],
+                                                ymin, xmin, ymax, xmax, min_size, 'filter_bboxes_{}'.format(class_ind))
+            ymin, xmin, ymax, xmax, selected_scores[class_ind] = sort_bboxes(selected_scores[class_ind],
+                                                ymin, xmin, ymax, xmax, keep_topk, 'sort_bboxes_{}'.format(class_ind))
+            selected_bboxes[class_ind] = tf.stack([ymin, xmin, ymax, xmax], axis=-1)
+            selected_scores[class_ind], selected_bboxes[class_ind] = nms_bboxes(selected_scores[class_ind], selected_bboxes[class_ind], nms_topk, nms_threshold, 'nms_bboxes_{}'.format(class_ind))
+
+        return selected_bboxes, selected_scores
+
+def main(_):
+    with tf.Graph().as_default():
+        out_shape = [FLAGS.train_image_size] * 2
+
+        image_input = tf.placeholder(tf.uint8, shape=(None, None, 3))
+        shape_input = tf.placeholder(tf.int32, shape=(2,))
+
+        features = common_preprocessing.preprocess_for_test(image_input, out_shape, data_format=('NCHW' if FLAGS.data_format=='channels_first' else 'NHWC'))
+
+        features = tf.expand_dims(features, axis=0)
+
+        anchor_creator = anchor_manipulator_v2.AnchorCreator(out_shape,
+                                                    layers_shapes = [(20, 20), (10, 10), (5, 5)],
+                                                    anchor_scales = [(0.1,), (0.2, 0.375, 0.55), (0.725, 0.9)],
+                                                    extra_anchor_scales = [(0.1414,), (0.2739, 0.4541, 0.6315), (0.8078, 0.9836)],
+                                                    anchor_ratios = [(2., .5), (2., 3., .5, 0.3333), (2., .5)],
+                                                    layer_steps = [16, 32, 64])
+        all_anchors, all_num_anchors_depth, all_num_anchors_spatial = anchor_creator.get_all_anchors()
+
+        anchor_encoder_decoder = anchor_manipulator_v2.AnchorEncoder(allowed_borders = [1.0] * 6,
+                                                            positive_threshold = None,
+                                                            ignore_threshold = None,
+                                                            prior_scaling=[0.1, 0.1, 0.2, 0.2])
+
+        decode_fn = lambda pred : anchor_encoder_decoder.ext_decode_all_anchors(pred, all_anchors, all_num_anchors_depth, all_num_anchors_spatial)
+
+        with tf.variable_scope(FLAGS.model_scope, default_name=None, values=[features], reuse=tf.AUTO_REUSE):
+            with tf.device('/gpu:0'):
+                backbone = xdet_body_v5.xdet_resnet_v5(FLAGS.resnet_size, FLAGS.data_format)
+                backbone_outputs = backbone(inputs=features, is_training=False)
+
+                cls_pred, location_pred = xdet_body_v5.xdet_head(backbone_outputs, FLAGS.num_classes, all_num_anchors_depth, False, data_format=FLAGS.data_format)
+
+                if FLAGS.data_format == 'channels_first':
+                    cls_pred = [tf.transpose(pred, [0, 2, 3, 1]) for pred in cls_pred]
+                    location_pred = [tf.transpose(pred, [0, 2, 3, 1]) for pred in location_pred]
+
+                cls_pred = [tf.reshape(pred, [-1, FLAGS.num_classes]) for pred in cls_pred]
+                location_pred = [tf.reshape(pred, [-1, 4]) for pred in location_pred]
+
+                cls_pred = tf.concat(cls_pred, axis=0)
+                location_pred = tf.concat(location_pred, axis=0)
+
+        bboxes_pred = decode_fn(location_pred)
+        bboxes_pred = tf.concat(bboxes_pred, axis=0)
+        selected_bboxes, selected_scores = parse_by_class(cls_pred, bboxes_pred,
+                                                        FLAGS.num_classes, FLAGS.select_threshold, FLAGS.min_size,
+                                                        FLAGS.keep_topk, FLAGS.nms_topk, FLAGS.nms_threshold)
+
+        scores_list = []
+        bboxes_list = []
+        for class_ind in range(1, FLAGS.num_classes):
+            scores_list.append(selected_scores[class_ind])
+            bboxes_list.append(selected_bboxes[class_ind])
+
+        saver = tf.train.Saver()
+
+        summary_dir = os.path.join(FLAGS.model_dir, 'predict')
+        if not os.path.exists(summary_dir):
+            os.makedirs(summary_dir)
+
+        all_images = tf.gfile.Glob(os.path.join(FLAGS.test_dataset_path, '*.jpg'))
+        #print(all_images)
+        len_images = len(all_images)
+        gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = 0.3)
+        config = tf.ConfigProto(allow_soft_placement=True, log_device_placement = False, gpu_options = gpu_options)
+        with tf.Session(config=config) as sess:
+            init = tf.global_variables_initializer()
+            sess.run(init)
+            saver.restore(sess, get_checkpoint())
+
+            file_mode = 'wt'
+            for ind, image_name in enumerate(all_images):
+                sys.stdout.write('\r>> Processing image %d/%d' % (ind+1, len_images))
+                sys.stdout.flush()
+
+                np_image = imread(image_name)
+                detected_results = sess.run(bboxes_list + scores_list + [shape_input], feed_dict = {image_input : np_image, shape_input : np_image.shape[:-1]})
+
+                detected_bboxes = detected_results[:len(detected_results)//2]
+                detected_scores = detected_results[len(detected_results)//2:-1]
+                shape = detected_results[-1]
+
+                assert len(detected_bboxes) == len(detected_scores)
+
+                for class_ind in range(FLAGS.num_classes-1):
+                    with open(os.path.join(summary_dir, 'results_{}.txt'.format(class_ind+1)), file_mode) as f:
+                        scores = detected_scores[class_ind]
+                        bboxes = detected_bboxes[class_ind]
+                        bboxes[:, 0] = (bboxes[:, 0] * shape[0]).astype(np.int32, copy=False) + 1
+                        bboxes[:, 1] = (bboxes[:, 1] * shape[1]).astype(np.int32, copy=False) + 1
+                        bboxes[:, 2] = (bboxes[:, 2] * shape[0]).astype(np.int32, copy=False) + 1
+                        bboxes[:, 3] = (bboxes[:, 3] * shape[1]).astype(np.int32, copy=False) + 1
+
+                        valid_mask = np.logical_and((bboxes[:, 2] - bboxes[:, 0] > 0), (bboxes[:, 3] - bboxes[:, 1] > 0))
+
+                        for det_ind in range(valid_mask.shape[0]):
+                            if not valid_mask[det_ind]:
+                                continue
+                            f.write('{:s} {:.3f} {:.1f} {:.1f} {:.1f} {:.1f}\n'.
+                                        format(image_name[-10:-4], scores[det_ind],
+                                               bboxes[det_ind, 1], bboxes[det_ind, 0],
+                                               bboxes[det_ind, 3], bboxes[det_ind, 2]))
+
+                file_mode = 'at'
+            sys.stdout.write('\n')
+            sys.stdout.flush()
+
+if __name__ == '__main__':
+  tf.logging.set_verbosity(tf.logging.INFO)
+  tf.app.run()

@@ -500,7 +500,7 @@ def preprocess_for_train(image, labels, bboxes,
 def preprocess_for_eval(image, labels, bboxes,
                         out_shape=EVAL_SIZE, data_format='NHWC',
                         difficults=None, resize=Resize.WARP_RESIZE,
-                        scope='common_preprocessing_train'):
+                        scope='common_preprocessing_eval'):
     with tf.name_scope(scope):
         if image.get_shape().ndims != 3:
             raise ValueError('Input must be of size [height, width, C>0]')
@@ -555,6 +555,24 @@ def preprocess_for_eval(image, labels, bboxes,
         if data_format == 'NCHW':
             image = tf.transpose(image, perm=(2, 0, 1))
         return image, labels, bboxes, bbox_img
+
+def preprocess_for_test(image, out_shape, data_format='NHWC', resize=Resize.WARP_RESIZE,
+                        scope='common_preprocessing_test'):
+    with tf.name_scope(scope):
+        if image.get_shape().ndims != 3:
+            raise ValueError('Input must be of size [height, width, C>0]')
+
+        image = tf.to_float(image)
+        image = tf_image_whitened(image, [_R_MEAN, _G_MEAN, _B_MEAN])
+
+        # Warp resize of the image.
+        image = tf_image.resize_image(image, out_shape,
+                                      method=tf.image.ResizeMethod.BILINEAR,
+                                      align_corners=False)
+        # Image data format.
+        if data_format == 'NCHW':
+            image = tf.transpose(image, perm=(2, 0, 1))
+        return image
 
 def get_image_to_show(image, bboxes, unwhitened=False):
     """Draw an image with bounding boxes to show.

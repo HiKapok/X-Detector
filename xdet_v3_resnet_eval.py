@@ -104,7 +104,7 @@ tf.app.flags.DEFINE_string(
     'model_scope', 'xdet_resnet',
     'Model scope name used to replace the name_scope in checkpoint.')
 tf.app.flags.DEFINE_boolean(
-    'run_on_cloud', False,
+    'run_on_cloud', True,
     'Wether we will train on cloud (checkpoint will be found in the "data_dir/cloud_checkpoint_path").')
 tf.app.flags.DEFINE_string(
     'cloud_checkpoint_path', 'resnet50/model.ckpt',

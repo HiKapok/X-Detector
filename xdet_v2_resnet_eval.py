@@ -44,7 +44,7 @@ tf.app.flags.DEFINE_integer(
     'num_cpu_threads', 0,
     'The number of cpu cores used to train.')
 tf.app.flags.DEFINE_float(
-    'gpu_memory_fraction', 1., 'GPU memory fraction to use.')
+    'gpu_memory_fraction', 0.4, 'GPU memory fraction to use.')
 # scaffold related configuration
 tf.app.flags.DEFINE_string(
     'data_dir', '../PASCAL/VOC_TF/VOC2007TEST_TF/',
@@ -85,9 +85,9 @@ tf.app.flags.DEFINE_float(
 tf.app.flags.DEFINE_float(
     'negative_ratio', 3., 'Negative ratio in the loss function.')
 tf.app.flags.DEFINE_float(
-    'match_threshold', 0.6, 'Matching threshold in the loss function.')#0.6
+    'match_threshold', 0.5, 'Matching threshold in the loss function.')#0.6
 tf.app.flags.DEFINE_float(
-    'neg_threshold', 0.4, 'Matching threshold for the negtive examples in the loss function.')#0.45
+    'neg_threshold', 0.5, 'Matching threshold for the negtive examples in the loss function.')#0.45
 tf.app.flags.DEFINE_float(
     'select_threshold', 0.01, 'Class-specific confidence score threshold for selecting a box.')
 tf.app.flags.DEFINE_float(
@@ -104,7 +104,7 @@ tf.app.flags.DEFINE_string(
     'model_scope', 'xdet_resnet',
     'Model scope name used to replace the name_scope in checkpoint.')
 tf.app.flags.DEFINE_boolean(
-    'run_on_cloud', False,
+    'run_on_cloud', True,
     'Wether we will train on cloud (checkpoint will be found in the "data_dir/cloud_checkpoint_path").')
 tf.app.flags.DEFINE_string(
     'cloud_checkpoint_path', 'resnet50',

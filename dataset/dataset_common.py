@@ -346,6 +346,156 @@ def slim_get_split(split_name, dataset_dir, file_pattern, reader, image_preproce
                                 capacity = 64 * kwargs['batch_size'])
     return batch_input, None
 
+def simple_slim_get_split(split_name, dataset_dir, file_pattern, reader, image_preprocessing_fn, dataset_name, split_to_sizes, items_to_descriptions, num_classes, **kwargs):
+    """Gets a dataset tuple with instructions for reading Pascal VOC dataset.
+
+    Args:
+      split_name: A train/test split name.
+      dataset_dir: The base directory of the dataset sources.
+      file_pattern: The file pattern to use when matching the dataset sources.
+        It is assumed that the pattern contains a '%s' string so that the split
+        name can be inserted.
+      reader: The TensorFlow reader type.
+
+    Returns:
+      A `Dataset` namedtuple.
+
+    Raises:
+        ValueError: if `split_name` is not a valid train/test split.
+    """
+    if split_name not in split_to_sizes:
+        raise ValueError('split name %s was not recognized.' % split_name)
+    file_pattern = os.path.join(dataset_dir, file_pattern % split_name)
+
+    # Allowing None in the signature so that dataset_factory can use the default.
+    if reader is None:
+        reader = tf.TFRecordReader
+    if 'coco' in dataset_name:
+        # Features in CoCo TFRecords.
+        keys_to_features = {
+            'image/encoded': tf.FixedLenFeature((), tf.string, default_value=''),
+            'image/format': tf.FixedLenFeature((), tf.string, default_value='jpeg'),
+            'image/height': tf.FixedLenFeature([1], tf.int64),
+            'image/width': tf.FixedLenFeature([1], tf.int64),
+            'image/channels': tf.FixedLenFeature([1], tf.int64),
+            'image/shape': tf.FixedLenFeature([3], tf.int64),
+            'image/object/bbox/xmin': tf.VarLenFeature(dtype=tf.float32),
+            'image/object/bbox/ymin': tf.VarLenFeature(dtype=tf.float32),
+            'image/object/bbox/xmax': tf.VarLenFeature(dtype=tf.float32),
+            'image/object/bbox/ymax': tf.VarLenFeature(dtype=tf.float32),
+            'image/object/bbox/label': tf.VarLenFeature(dtype=tf.int64),
+            'image/object/bbox/iscrowd': tf.VarLenFeature(dtype=tf.int64),
+        }
+        items_to_handlers = {
+            'image': slim.tfexample_decoder.Image('image/encoded', 'image/format'),
+            'shape': slim.tfexample_decoder.Tensor('image/shape'),
+            'object/bbox': slim.tfexample_decoder.BoundingBox(
+                    ['ymin', 'xmin', 'ymax', 'xmax'], 'image/object/bbox/'),
+            'object/label': slim.tfexample_decoder.Tensor('image/object/bbox/label'),
+            'object/iscrowd': slim.tfexample_decoder.Tensor('image/object/bbox/iscrowd'),
+        }
+    else:
+        # Features in Pascal VOC TFRecords.
+        keys_to_features = {
+            'image/encoded': tf.FixedLenFeature((), tf.string, default_value=''),
+            'image/format': tf.FixedLenFeature((), tf.string, default_value='jpeg'),
+            'image/height': tf.FixedLenFeature([1], tf.int64),
+            'image/width': tf.FixedLenFeature([1], tf.int64),
+            'image/channels': tf.FixedLenFeature([1], tf.int64),
+            'image/shape': tf.FixedLenFeature([3], tf.int64),
+            'image/object/bbox/xmin': tf.VarLenFeature(dtype=tf.float32),
+            'image/object/bbox/ymin': tf.VarLenFeature(dtype=tf.float32),
+            'image/object/bbox/xmax': tf.VarLenFeature(dtype=tf.float32),
+            'image/object/bbox/ymax': tf.VarLenFeature(dtype=tf.float32),
+            'image/object/bbox/label': tf.VarLenFeature(dtype=tf.int64),
+            'image/object/bbox/difficult': tf.VarLenFeature(dtype=tf.int64),
+            'image/object/bbox/truncated': tf.VarLenFeature(dtype=tf.int64),
+        }
+        items_to_handlers = {
+            'image': slim.tfexample_decoder.Image('image/encoded', 'image/format'),
+            'shape': slim.tfexample_decoder.Tensor('image/shape'),
+            'object/bbox': slim.tfexample_decoder.BoundingBox(
+                    ['ymin', 'xmin', 'ymax', 'xmax'], 'image/object/bbox/'),
+            'object/label': slim.tfexample_decoder.Tensor('image/object/bbox/label'),
+            'object/difficult': slim.tfexample_decoder.Tensor('image/object/bbox/difficult'),
+            'object/truncated': slim.tfexample_decoder.Tensor('image/object/bbox/truncated'),
+        }
+    decoder = slim.tfexample_decoder.TFExampleDecoder(
+        keys_to_features, items_to_handlers)
+
+    labels_to_names = {}
+    if 'coco' in dataset_name:
+        for name, pair in COCO_LABELS.items():
+            labels_to_names[pair[0]] = name
+    else:
+        for name, pair in VOC_LABELS.items():
+            labels_to_names[pair[0]] = name
+
+    dataset = slim.dataset.Dataset(
+                data_sources=file_pattern,
+                reader=reader,
+                decoder=decoder,
+                num_samples=split_to_sizes[split_name],
+                items_to_descriptions=items_to_descriptions,
+                num_classes=num_classes,
+                labels_to_names=labels_to_names)
+    is_training = True
+    # check additional arguments
+    if 'method' in kwargs:
+        if kwargs['method'] == 'eval':
+            is_training = False
+    if 'batch_size' not in kwargs:
+        raise ValueError('Must provide "batch_size" for slim DatasetDataProvider.')
+    if 'num_readers' not in kwargs:
+        raise ValueError('Must provide "num_readers" for slim DatasetDataProvider.')
+    if 'num_preprocessing_threads' not in kwargs:
+        raise ValueError('Must provide "num_preprocessing_threads" for slim DatasetDataProvider.')
+    if 'anchor_encoder' not in kwargs:
+        raise ValueError('Must provide "anchor_encoder" for slim DatasetDataProvider.')
+    if 'num_epochs' not in kwargs:
+        num_epochs = None
+    else:
+        num_epochs = kwargs['num_epochs']
+
+    with tf.name_scope('dataset_data_provider'):
+        provider = slim.dataset_data_provider.DatasetDataProvider(
+            dataset,
+            num_readers=kwargs['num_readers'],
+            common_queue_capacity=32 * kwargs['batch_size'],
+            common_queue_min=8 * kwargs['batch_size'],
+            shuffle=True,
+            num_epochs = num_epochs)
+
+    [org_image, shape, glabels_raw, gbboxes_raw, isdifficult] = provider.get(['image', 'shape',
+                                                     'object/label',
+                                                     'object/bbox',
+                                                     'object/difficult'])
+    # if is_training:
+    #     glabels_raw = tf.cast(isdifficult < tf.ones_like(isdifficult), glabels_raw.dtype) * glabels_raw
+    if is_training:
+        # if all is difficult, then keep the first one
+        isdifficult_mask =tf.cond(tf.count_nonzero(isdifficult, dtype=tf.int32) < tf.shape(isdifficult)[0],
+                                lambda : isdifficult < tf.ones_like(isdifficult),
+                                lambda : tf.one_hot(0, tf.shape(isdifficult)[0], on_value=True, off_value=False, dtype=tf.bool))
+
+        glabels_raw = tf.boolean_mask(glabels_raw, isdifficult_mask)
+        gbboxes_raw = tf.boolean_mask(gbboxes_raw, isdifficult_mask)
+
+    # Pre-processing image, labels and bboxes.
+    if is_training:
+        image, glabels_, gbboxes_ = image_preprocessing_fn(org_image, shape, glabels_raw, gbboxes_raw)
+    else:
+        image, glabels_, gbboxes_, bbox_img = image_preprocessing_fn(org_image, shape, glabels_raw, gbboxes_raw)
+
+
+    gt_targets, gt_labels, gt_scores = kwargs['anchor_encoder'](glabels_, gbboxes_)
+
+    return tf.train.batch([image, shape, gt_targets, gt_labels, gt_scores],
+                    dynamic_pad=False,
+                    batch_size=kwargs['batch_size'],
+                    allow_smaller_final_batch=(not is_training),
+                    num_threads=kwargs['num_preprocessing_threads'],
+                    capacity=64 * kwargs['batch_size'])
 
 def get_split(split_name, dataset_dir, file_pattern, reader, image_preprocessing_fn,
               dataset_name, split_to_sizes, items_to_descriptions, num_classes, **kwargs):

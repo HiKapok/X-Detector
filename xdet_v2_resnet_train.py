@@ -86,9 +86,9 @@ tf.app.flags.DEFINE_string(
 tf.app.flags.DEFINE_float(
     'negative_ratio', 3., 'Negative ratio in the loss function.')
 tf.app.flags.DEFINE_float(
-    'match_threshold', 0.6, 'Matching threshold in the loss function.')#0.6
+    'match_threshold', 0.5, 'Matching threshold in the loss function.')#0.6
 tf.app.flags.DEFINE_float(
-    'neg_threshold', 0.4, 'Matching threshold for the negtive examples in the loss function.')#0.4
+    'neg_threshold', 0.5, 'Matching threshold for the negtive examples in the loss function.')#0.4
 # optimizer related configuration
 tf.app.flags.DEFINE_float(
     'weight_decay', 0.0002, 'The weight decay on the model weights.')
@@ -129,7 +129,7 @@ tf.app.flags.DEFINE_boolean(
     'ignore_missing_vars', True,
     'When restoring a checkpoint would ignore missing variables.')
 tf.app.flags.DEFINE_boolean(
-    'run_on_cloud', False,
+    'run_on_cloud', True,
     'Wether we will train on cloud (pre-trained model will be placed in the "data_dir/cloud_checkpoint_path").')
 tf.app.flags.DEFINE_string(
     'cloud_checkpoint_path', 'resnet50',
@@ -390,3 +390,22 @@ def main(_):
 if __name__ == '__main__':
   tf.logging.set_verbosity(tf.logging.INFO)
   tf.app.run()
+
+
+# 0.5, 0.5
+# INFO:tensorflow:loc_loss = 0.675493, total_loss = 3.02218, ce_loss = 0.556885, cls_acc = 0.803118, lr = 0.002 (14.741 sec)
+# 2018-05-06 17:15:47,413 INFO (MainThread-421) loc_loss = 0.675493, total_loss = 3.02218, ce_loss = 0.556885, cls_acc = 0.803118, lr = 0.002 (14.741 sec)
+# INFO:tensorflow:step = 119401, loss = 1.61156 (163.394 sec)
+# 2018-05-08 19:01:31,997 INFO (MainThread-421) step = 119401, loss = 1.61156 (163.394 sec)
+# INFO:tensorflow:global_step/sec: 0.673582
+# 2018-05-08 19:01:46,842 INFO (MainThread-421) global_step/sec: 0.673582
+# INFO:tensorflow:loc_loss = 0.315306, total_loss = 1.64389, ce_loss = 0.235289, cls_acc = 0.873122, lr = 0.0002 (14.846 sec)
+# 2018-05-08 19:01:46,843 INFO (MainThread-421) loc_loss = 0.315306, total_loss = 1.64389, ce_loss = 0.235289, cls_acc = 0.873122, lr = 0.0002 (14.846 sec)
+# INFO:tensorflow:global_step/sec: 0.726808
+# 2018-05-08 19:02:00,601 INFO (MainThread-421) global_step/sec: 0.726808
+# INFO:tensorflow:loc_loss = 0.423853, total_loss = 1.852, ce_loss = 0.300177, cls_acc = 0.873125, lr = 0.0002 (13.759 sec)
+# 2018-05-08 19:02:00,602 INFO (MainThread-421) loc_loss = 0.423853, total_loss = 1.852, ce_loss = 0.300177, cls_acc = 0.873125, lr = 0.0002 (13.759 sec)
+# INFO:tensorflow:global_step/sec: 0.615656
+# 2018-05-08 19:02:16,844 INFO (MainThread-421) global_step/sec: 0.615656
+# INFO:tensorflow:loc_loss = 0.218686, total_loss = 1.50142, ce_loss = 0.213196, cls_acc = 0.873128, lr = 0.0002 (16.243 sec)
+# 2018-05-08 19:02:16,844 INFO (MainThread-421) loc_loss = 0.218686, total_loss = 1.50142, ce_loss = 0.213196, cls_acc = 0.873128, lr = 0.0002 (16.243 sec)
